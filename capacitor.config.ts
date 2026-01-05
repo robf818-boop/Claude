@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.defendiq.app',
-  appName: 'DefendIQ',
+  appId: 'com.unitiq.enterprise',
+  appName: 'UnitIQ',
   webDir: 'dist',
   server: {
     androidScheme: 'https'

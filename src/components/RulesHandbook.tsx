@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Rule, AgeLevel } from '../types';
+import { AgeLevel } from '../types';
 import { rules } from '../data/rules';
 import { Search, BookOpen, Filter } from 'lucide-react';
 

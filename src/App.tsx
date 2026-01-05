@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { GameSituation, AgeLevel, SkillLevel } from './types';
 import { BaseballField } from './components/BaseballField';
 import { SituationSelector } from './components/SituationSelector';

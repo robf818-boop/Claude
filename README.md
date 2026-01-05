@@ -67,8 +67,9 @@ DefendIQ is an interactive web application designed to help baseball coaches tea
 ### Prerequisites
 - Node.js (version 16 or higher)
 - npm or yarn
+- For iOS/TestFlight: Mac with Xcode and Apple Developer account
 
-### Setup
+### Web Application Setup
 
 1. Clone the repository:
 ```bash
@@ -90,6 +91,26 @@ npm run dev
 ```
 http://localhost:5173
 ```
+
+### iOS App (TestFlight Distribution)
+
+DefendIQ is configured for iOS distribution via TestFlight!
+
+**Quick Start:**
+```bash
+# Build and sync to iOS
+npm run ios:build
+
+# Open in Xcode
+npm run ios:open
+```
+
+**Complete TestFlight Guide**: See [TESTFLIGHT.md](./TESTFLIGHT.md) for detailed instructions on:
+- Setting up Xcode
+- Configuring app signing
+- Creating app icons
+- Uploading to TestFlight
+- Inviting testers
 
 ## Usage
 

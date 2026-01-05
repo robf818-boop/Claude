@@ -1,7 +1,7 @@
 {
-  "name": "baseball-situation-simulator",
+  "name": "defend-iq",
   "version": "1.0.0",
-  "description": "Interactive baseball situation simulator for coaches and players",
+  "description": "DefendIQ - Interactive baseball defensive positioning simulator for coaches and players",
   "private": true,
   "type": "module",
   "scripts": {

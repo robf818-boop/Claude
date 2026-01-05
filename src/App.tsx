@@ -42,10 +42,10 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 py-6">
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <Users size={36} />
-            Baseball Situation Simulator
+            DefendIQ
           </h1>
           <p className="mt-2 text-blue-100">
-            Interactive training tool for coaches and players - Learn positioning and strategy
+            Master Baseball Defensive Positioning - Interactive training for coaches and players
           </p>
         </div>
       </header>
@@ -232,8 +232,8 @@ function App() {
                   <div className="space-y-4">
                     <h3 className="font-bold text-lg text-gray-900">About This Tool</h3>
                     <p className="text-sm text-gray-600">
-                      The Baseball Situation Simulator is designed to help coaches teach
-                      and players learn proper positioning for various game situations.
+                      DefendIQ is designed to help coaches teach and players learn proper
+                      defensive positioning for various game situations.
                     </p>
 
                     <div className="space-y-3">
@@ -280,7 +280,7 @@ function App() {
       <footer className="mt-12 bg-gray-800 text-white py-6">
         <div className="max-w-7xl mx-auto px-4 text-center">
           <p className="text-sm">
-            Baseball Situation Simulator - Empowering coaches and players with interactive training tools
+            DefendIQ - Empowering coaches and players with interactive defensive training tools
           </p>
           <p className="text-xs text-gray-400 mt-2">
             Supports all age levels from T-Ball to High School and Travel Ball

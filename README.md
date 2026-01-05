@@ -1,6 +1,8 @@
-# Baseball Situation Simulator
+# DefendIQ
 
-An interactive web application designed to help baseball coaches teach and players learn proper positioning for various game situations. This tool provides visual field representations, detailed player instructions, and AI-powered scenario generation for all age and skill levels.
+**Master Baseball Defensive Positioning**
+
+DefendIQ is an interactive web application designed to help baseball coaches teach and players learn proper defensive positioning for various game situations. This tool provides visual field representations, detailed player instructions, and AI-powered scenario generation for all age and skill levels.
 
 ## Features
 

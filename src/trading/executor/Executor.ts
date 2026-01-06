@@ -14,12 +14,10 @@ import {
   OptionChain,
   Order,
   Position,
-  OrderStatus,
   AssetClass,
   Side,
   ModuleStatus,
   TradingEvent,
-  Greeks,
 } from '../core/types';
 import { EventBus, getEventBus } from '../events/EventBus';
 
@@ -179,13 +177,14 @@ export class Executor {
     // Select option contract if we have chain data
     let optionContract: OptionContract | undefined;
     if (optionChain && signal.optionRecommendation) {
-      optionContract = this.selectOptionContract(signal, optionChain);
-      if (!optionContract) {
+      const selected = this.selectOptionContract(signal, optionChain);
+      if (!selected) {
         return {
           success: false,
           error: 'No suitable option contract found',
         };
       }
+      optionContract = selected;
     }
 
     // Calculate position size

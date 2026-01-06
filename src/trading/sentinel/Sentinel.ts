@@ -48,7 +48,6 @@ export class Sentinel {
   // Data storage
   private candleHistory: Map<string, Candle[]> = new Map();
   private optionChains: Map<string, OptionChain> = new Map();
-  private futuresContracts: Map<string, FuturesContract> = new Map();
 
   // Polling intervals
   private candlePollers: Map<string, NodeJS.Timeout> = new Map();
@@ -197,7 +196,7 @@ export class Sentinel {
 
   // Private Methods
 
-  private createDataProvider(source: string): DataProvider {
+  private createDataProvider(_source: string): DataProvider {
     // For now, use mock provider - can be extended for real brokers
     return new MockDataProvider();
   }

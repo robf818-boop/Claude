@@ -13,17 +13,11 @@ import {
   RiskMetrics,
   RiskLevel,
   CircuitBreaker,
-  CircuitBreakerStatus,
   RiskAlert,
   ModuleStatus,
   TradingEvent,
-  Greeks,
 } from '../core/types';
 import { EventBus, getEventBus } from '../events/EventBus';
-
-interface PositionUpdateEvent {
-  position: Position;
-}
 
 interface PositionClosedEvent {
   position: Position;
@@ -157,7 +151,7 @@ export class Warden {
     }
 
     // Check circuit breakers
-    for (const [id, breaker] of this.circuitBreakers) {
+    for (const [, breaker] of this.circuitBreakers) {
       if (breaker.status === 'triggered') {
         return {
           allowed: false,

@@ -5,7 +5,7 @@
  * Displays system status, positions, signals, and risk metrics.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -150,21 +150,6 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
   }, [flipper]);
 
   // Render helpers
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running':
-        return 'text-green-500';
-      case 'stopped':
-        return 'text-gray-500';
-      case 'paused':
-        return 'text-yellow-500';
-      case 'error':
-        return 'text-red-500';
-      default:
-        return 'text-gray-400';
-    }
-  };
-
   const getRiskLevelColor = (level: string) => {
     switch (level) {
       case 'low':
@@ -625,7 +610,7 @@ const RiskTab: React.FC<{
   metrics: RiskMetrics | null;
   breakers: CircuitBreaker[];
   alerts: RiskAlert[];
-}> = ({ metrics, breakers, alerts }) => (
+}> = ({ metrics, breakers }) => (
   <div className="grid grid-cols-2 gap-6">
     {/* Risk Metrics */}
     <div>

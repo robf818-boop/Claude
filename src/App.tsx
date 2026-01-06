@@ -5,9 +5,10 @@ import { SituationSelector } from './components/SituationSelector';
 import { AIScenarioGenerator } from './components/AIScenarioGenerator';
 import { RulesHandbook } from './components/RulesHandbook';
 import { PlayerInstructions } from './components/PlayerInstructions';
-import { Play, BookOpen, Sparkles, Settings, Users } from 'lucide-react';
+import { TradingDashboard } from './components/trading/TradingDashboard';
+import { Play, BookOpen, Sparkles, Settings, Users, TrendingUp } from 'lucide-react';
 
-type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings';
+type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings' | 'trading';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('situations');
@@ -39,17 +40,41 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 to-green-600 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <Users size={36} />
-            DefendIQ
-          </h1>
-          <p className="mt-2 text-blue-100">
-            Master Baseball Defensive Positioning - Interactive training for coaches and players
-          </p>
+        <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <Users size={36} />
+              DefendIQ
+            </h1>
+            <p className="mt-2 text-blue-100">
+              Master Baseball Defensive Positioning - Interactive training for coaches and players
+            </p>
+          </div>
+          <button
+            onClick={() => setActiveTab(activeTab === 'trading' ? 'situations' : 'trading')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'trading'
+                ? 'bg-yellow-500 text-black font-bold'
+                : 'bg-white/20 hover:bg-white/30'
+            }`}
+          >
+            <TrendingUp size={20} />
+            {activeTab === 'trading' ? 'Back to Baseball' : 'AutoFlipper Trading'}
+          </button>
         </div>
       </header>
 
+      {/* Trading Dashboard - Full Screen */}
+      {activeTab === 'trading' && (
+        <TradingDashboard
+          symbols={['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA']}
+          paperTrading={true}
+        />
+      )}
+
+      {/* Baseball Content */}
+      {activeTab !== 'trading' && (
+      <>
       {/* Settings Bar */}
       <div className="bg-white border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4">
@@ -287,6 +312,8 @@ function App() {
           </p>
         </div>
       </footer>
+      </>
+      )}
     </div>
   );
 }

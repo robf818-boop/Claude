@@ -22,7 +22,6 @@ import {
   RSIValues,
   ATRValues,
   MACDValues,
-  VolumeAnalysis,
   TradingEvent,
 } from '../core/types';
 import { EventBus, getEventBus } from '../events/EventBus';

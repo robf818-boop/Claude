@@ -66,15 +66,15 @@ export class AutoFlipper {
     stopLossPercent: number;
     trailingStopPercent: number;
   } = {
-    minConfluenceScore: 60,
-    minStrength: 'moderate',
-    maxDailyTrades: 10,
-    maxConcurrentPositions: 5,
+    minConfluenceScore: 50,  // Lower threshold for more trades
+    minStrength: 'weak',     // Accept weaker signals
+    maxDailyTrades: 20,      // Allow more trades per day
+    maxConcurrentPositions: 8,
     tradesToday: 0,
     autoCloseEnabled: true,
-    takeProfitPercent: 15,  // Close at +15% profit
-    stopLossPercent: 10,    // Close at -10% loss
-    trailingStopPercent: 5, // Trail by 5% from peak
+    takeProfitPercent: 10,  // Close at +10% profit
+    stopLossPercent: 8,     // Close at -8% loss
+    trailingStopPercent: 4, // Trail by 4% from peak
   };
 
   // Position monitoring
@@ -692,7 +692,7 @@ export function createAutoFlipper(
 ): AutoFlipper {
   const {
     paperTrading = true,
-    updateIntervalMs = 60000,
+    updateIntervalMs = 15000, // Update every 15 seconds for more active trading
     fetchOptions = true,
   } = options;
 

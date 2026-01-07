@@ -331,17 +331,20 @@ class MockDataProvider implements DataProvider {
 
     let price = this.priceState.get(symbol)!;
 
+    // Add some trend bias to generate more signals
+    const trendBias = (Math.random() - 0.5) * 0.01; // Random trend direction
+
     for (let i = limit - 1; i >= 0; i--) {
       const timestamp = now - i * intervalMs;
 
-      // Generate realistic OHLCV with random walk
-      const volatility = 0.002; // 0.2% per candle
-      const change = price * volatility * (Math.random() * 2 - 1);
+      // Generate realistic OHLCV with random walk + trend
+      const volatility = 0.008; // 0.8% per candle (increased from 0.2%)
+      const change = price * (volatility * (Math.random() * 2 - 1) + trendBias);
       const open = price;
       price += change;
       const close = price;
-      const high = Math.max(open, close) * (1 + Math.random() * 0.001);
-      const low = Math.min(open, close) * (1 - Math.random() * 0.001);
+      const high = Math.max(open, close) * (1 + Math.random() * 0.003);
+      const low = Math.min(open, close) * (1 - Math.random() * 0.003);
       const volume = Math.floor(100000 + Math.random() * 500000);
 
       candles.push({

@@ -78,15 +78,15 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
   // Auto-trade state
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [autoTradeSettings, setAutoTradeSettings] = useState({
-    minConfluenceScore: 60,
-    minStrength: 'moderate' as 'weak' | 'moderate' | 'strong' | 'extreme',
-    maxDailyTrades: 10,
-    maxConcurrentPositions: 5,
+    minConfluenceScore: 50,
+    minStrength: 'weak' as 'weak' | 'moderate' | 'strong' | 'extreme',
+    maxDailyTrades: 20,
+    maxConcurrentPositions: 8,
     tradesToday: 0,
     autoCloseEnabled: true,
-    takeProfitPercent: 15,
-    stopLossPercent: 10,
-    trailingStopPercent: 5,
+    takeProfitPercent: 10,
+    stopLossPercent: 8,
+    trailingStopPercent: 4,
   });
   const [showAutoTradeSettings, setShowAutoTradeSettings] = useState(false);
 

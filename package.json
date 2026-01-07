@@ -1,7 +1,7 @@
 {
-  "name": "defend-iq",
+  "name": "autoflipper",
   "version": "1.0.0",
-  "description": "DefendIQ - Interactive baseball defensive positioning simulator for coaches and players",
+  "description": "AutoFlipper - Event-driven options trading system",
   "private": true,
   "type": "module",
   "scripts": {

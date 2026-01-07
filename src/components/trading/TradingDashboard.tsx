@@ -253,27 +253,14 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
       setMarketData(data);
       setLastUpdate(new Date());
 
-      // Update position prices in the flipper
-      if (flipper && priceMap.size > 0) {
-        // For options, we need to estimate the new price based on underlying movement
+      // Update position prices in the flipper - use STABLE small changes only
+      if (flipper && positions.length > 0) {
         const positionPrices = new Map<string, number>();
         positions.forEach(pos => {
-          const baseSymbol = pos.symbol.match(/^([A-Z]+)/)?.[1] || pos.symbol;
-          const underlyingPrice = priceMap.get(baseSymbol);
-
-          if (underlyingPrice) {
-            if (pos.symbol.length > 10) {
-              // Option contract - estimate new price based on delta
-              const delta = pos.currentGreeks?.delta || 0.5;
-              const underlyingChange = underlyingPrice - (pos.avgEntryPrice / Math.abs(delta));
-              const optionPriceChange = underlyingChange * Math.abs(delta);
-              const newPrice = Math.max(0.01, pos.avgEntryPrice + optionPriceChange * (Math.random() * 0.5 + 0.75));
-              positionPrices.set(pos.symbol, newPrice);
-            } else {
-              // Stock - use actual price
-              positionPrices.set(pos.symbol, underlyingPrice);
-            }
-          }
+          // Only make tiny price adjustments (0.1% max) to avoid wild swings
+          const smallChange = pos.currentPrice * 0.001 * (Math.random() * 2 - 1);
+          const newPrice = Math.max(0.01, pos.currentPrice + smallChange);
+          positionPrices.set(pos.symbol, newPrice);
         });
 
         if (positionPrices.size > 0) {

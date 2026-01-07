@@ -61,13 +61,25 @@ export class AutoFlipper {
     maxDailyTrades: number;
     maxConcurrentPositions: number;
     tradesToday: number;
+    autoCloseEnabled: boolean;
+    takeProfitPercent: number;
+    stopLossPercent: number;
+    trailingStopPercent: number;
   } = {
     minConfluenceScore: 60,
     minStrength: 'moderate',
     maxDailyTrades: 10,
     maxConcurrentPositions: 5,
     tradesToday: 0,
+    autoCloseEnabled: true,
+    takeProfitPercent: 15,  // Close at +15% profit
+    stopLossPercent: 10,    // Close at -10% loss
+    trailingStopPercent: 5, // Trail by 5% from peak
   };
+
+  // Position monitoring
+  private positionMonitorInterval: ReturnType<typeof setInterval> | null = null;
+  private positionPeaks: Map<string, number> = new Map(); // Track highest P&L for trailing stop
 
   // Event listeners for external callbacks
   private eventListeners: Map<string, ((event: TradingEvent) => void)[]> = new Map();
@@ -119,6 +131,9 @@ export class AutoFlipper {
       this.systemStatus.isRunning = true;
       this.systemStatus.startedAt = Date.now();
 
+      // Start position monitoring for auto-close
+      this.startPositionMonitoring();
+
       console.log('[AutoFlipper] All modules started successfully');
       console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -146,6 +161,9 @@ export class AutoFlipper {
     }
 
     console.log('[AutoFlipper] Stopping all modules...');
+
+    // Stop position monitoring
+    this.stopPositionMonitoring();
 
     // Stop in reverse order
     this.executor.stop();
@@ -448,6 +466,97 @@ export class AutoFlipper {
       console.log(`[AutoFlipper] Auto-trade SUCCESS: Order ${result.order?.id} | Trades today: ${this.autoTradeSettings.tradesToday}`);
     } else {
       console.log(`[AutoFlipper] Auto-trade FAILED: ${result.error}`);
+    }
+  }
+
+  // ============================================================================
+  // POSITION MONITORING (Auto-Close)
+  // ============================================================================
+
+  /**
+   * Start monitoring positions for auto-close
+   */
+  private startPositionMonitoring(): void {
+    if (this.positionMonitorInterval) {
+      return; // Already running
+    }
+
+    console.log('[AutoFlipper] Starting position monitoring for auto-close');
+
+    // Check positions every 5 seconds
+    this.positionMonitorInterval = setInterval(() => {
+      this.checkPositionsForAutoClose();
+    }, 5000);
+  }
+
+  /**
+   * Stop position monitoring
+   */
+  private stopPositionMonitoring(): void {
+    if (this.positionMonitorInterval) {
+      clearInterval(this.positionMonitorInterval);
+      this.positionMonitorInterval = null;
+      console.log('[AutoFlipper] Position monitoring stopped');
+    }
+  }
+
+  /**
+   * Check all positions and close if targets hit
+   */
+  private async checkPositionsForAutoClose(): Promise<void> {
+    if (!this.autoTradeEnabled || !this.autoTradeSettings.autoCloseEnabled) {
+      return;
+    }
+
+    if (this.systemStatus.isPaused) {
+      return;
+    }
+
+    const positions = this.executor.getPositions();
+
+    for (const position of positions) {
+      const pnlPercent = position.unrealizedPnLPercent;
+      const positionId = position.id;
+
+      // Track peak P&L for trailing stop
+      const currentPeak = this.positionPeaks.get(positionId) || pnlPercent;
+      if (pnlPercent > currentPeak) {
+        this.positionPeaks.set(positionId, pnlPercent);
+      }
+      const peak = this.positionPeaks.get(positionId) || 0;
+
+      let shouldClose = false;
+      let closeReason = '';
+
+      // Check take profit
+      if (pnlPercent >= this.autoTradeSettings.takeProfitPercent) {
+        shouldClose = true;
+        closeReason = `Take profit hit: +${pnlPercent.toFixed(2)}% (target: +${this.autoTradeSettings.takeProfitPercent}%)`;
+      }
+
+      // Check stop loss
+      if (pnlPercent <= -this.autoTradeSettings.stopLossPercent) {
+        shouldClose = true;
+        closeReason = `Stop loss hit: ${pnlPercent.toFixed(2)}% (limit: -${this.autoTradeSettings.stopLossPercent}%)`;
+      }
+
+      // Check trailing stop (only if we've been in profit)
+      if (peak > 5 && (peak - pnlPercent) >= this.autoTradeSettings.trailingStopPercent) {
+        shouldClose = true;
+        closeReason = `Trailing stop hit: fell ${(peak - pnlPercent).toFixed(2)}% from peak of +${peak.toFixed(2)}%`;
+      }
+
+      if (shouldClose) {
+        console.log(`[AutoFlipper] AUTO-CLOSING ${position.symbol}: ${closeReason}`);
+        const result = await this.closePosition(positionId);
+
+        if (result.success) {
+          console.log(`[AutoFlipper] Position ${position.symbol} closed successfully`);
+          this.positionPeaks.delete(positionId);
+        } else {
+          console.log(`[AutoFlipper] Failed to close ${position.symbol}: ${result.error}`);
+        }
+      }
     }
   }
 

@@ -83,6 +83,10 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     maxDailyTrades: 10,
     maxConcurrentPositions: 5,
     tradesToday: 0,
+    autoCloseEnabled: true,
+    takeProfitPercent: 15,
+    stopLossPercent: 10,
+    trailingStopPercent: 5,
   });
   const [showAutoTradeSettings, setShowAutoTradeSettings] = useState(false);
 
@@ -401,6 +405,62 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
               />
             </div>
           </div>
+          {/* Auto-Close Settings */}
+          <div className="mt-6 pt-4 border-t border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-md font-semibold flex items-center gap-2">
+                Auto-Close Settings
+              </h4>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoTradeSettings.autoCloseEnabled}
+                  onChange={(e) => handleUpdateAutoTradeSettings({ autoCloseEnabled: e.target.checked })}
+                  className="w-4 h-4 accent-purple-600"
+                />
+                <span className="text-sm text-gray-400">Enabled</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Take Profit %</label>
+                <input
+                  type="number"
+                  value={autoTradeSettings.takeProfitPercent}
+                  onChange={(e) => handleUpdateAutoTradeSettings({ takeProfitPercent: parseInt(e.target.value) || 15 })}
+                  className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                  min={5}
+                  max={100}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Stop Loss %</label>
+                <input
+                  type="number"
+                  value={autoTradeSettings.stopLossPercent}
+                  onChange={(e) => handleUpdateAutoTradeSettings({ stopLossPercent: parseInt(e.target.value) || 10 })}
+                  className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                  min={2}
+                  max={50}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Trailing Stop %</label>
+                <input
+                  type="number"
+                  value={autoTradeSettings.trailingStopPercent}
+                  onChange={(e) => handleUpdateAutoTradeSettings({ trailingStopPercent: parseInt(e.target.value) || 5 })}
+                  className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                  min={2}
+                  max={25}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              Positions auto-close when hitting take profit, stop loss, or if price drops from peak by trailing stop %.
+            </p>
+          </div>
+
           <div className="mt-4 text-sm text-gray-400">
             Auto-trade today: {autoTradeSettings.tradesToday} / {autoTradeSettings.maxDailyTrades}
           </div>

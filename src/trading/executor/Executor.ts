@@ -534,41 +534,6 @@ export class Executor {
     };
   }
 
-  private finalizePositionClose(
-    position: Position,
-    closingOrder: Order,
-    reason: string
-  ): void {
-    const pnl =
-      (closingOrder.avgFillPrice! - position.avgEntryPrice) *
-      position.quantity *
-      (position.side === 'long' ? 1 : -1) *
-      (position.assetClass === 'option' ? 100 : 1);
-
-    // Update account balance
-    this.accountBalance += pnl;
-    const cost = position.avgEntryPrice * position.quantity * (position.assetClass === 'option' ? 100 : 1);
-    this.buyingPower += cost;
-
-    // Remove position
-    this.positions.delete(position.id);
-
-    console.log(
-      `[Executor] Position closed: ${position.symbol} | P&L: $${pnl.toFixed(2)} | Reason: ${reason}`
-    );
-
-    this.eventBus.emit(
-      'position_closed',
-      {
-        position,
-        closePrice: closingOrder.avgFillPrice,
-        pnl,
-        reason,
-      },
-      'executor'
-    );
-  }
-
   /**
    * Update position prices (called periodically)
    */

@@ -10,9 +10,8 @@ interface AuthGateProps {
   children: React.ReactNode;
 }
 
-// Password hash - change this to your own!
-// To generate: btoa('your-password-here')
-const PASSWORD_HASH = 'YXV0b2ZsaXBwZXIyMDI0'; // Default: 'autoflipper2024'
+// Password hash (base64 encoded)
+const PASSWORD_HASH = 'MDgxODIwMDhYQUYh';
 
 export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

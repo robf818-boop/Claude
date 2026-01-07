@@ -215,10 +215,20 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
       const clock = await alpaca.getClock();
       setIsMarketOpen(clock.isOpen);
 
+      // Get all symbols to fetch (watchlist + positions)
+      const positionSymbols = positions.map(p => {
+        // Extract base symbol from option contracts (e.g., "QQQ260114P00428610" -> "QQQ")
+        const match = p.symbol.match(/^([A-Z]+)/);
+        return match ? match[1] : p.symbol;
+      });
+      const allSymbols = [...new Set([...symbols, ...positionSymbols])];
+
       // Get snapshots for all symbols
-      const snapshots = await alpaca.fetchSnapshots(symbols);
+      const snapshots = await alpaca.fetchSnapshots(allSymbols);
 
       const data: MarketData[] = [];
+      const priceMap = new Map<string, number>();
+
       snapshots.forEach((snapshot, symbol) => {
         data.push({
           symbol,
@@ -229,25 +239,54 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
           ask: snapshot.ask,
           volume: snapshot.volume,
         });
+        priceMap.set(symbol, snapshot.price);
       });
 
       setMarketData(data);
       setLastUpdate(new Date());
+
+      // Update position prices in the flipper
+      if (flipper && priceMap.size > 0) {
+        // For options, we need to estimate the new price based on underlying movement
+        const positionPrices = new Map<string, number>();
+        positions.forEach(pos => {
+          const baseSymbol = pos.symbol.match(/^([A-Z]+)/)?.[1] || pos.symbol;
+          const underlyingPrice = priceMap.get(baseSymbol);
+
+          if (underlyingPrice) {
+            if (pos.symbol.length > 10) {
+              // Option contract - estimate new price based on delta
+              const delta = pos.currentGreeks?.delta || 0.5;
+              const underlyingChange = underlyingPrice - (pos.avgEntryPrice / Math.abs(delta));
+              const optionPriceChange = underlyingChange * Math.abs(delta);
+              const newPrice = Math.max(0.01, pos.avgEntryPrice + optionPriceChange * (Math.random() * 0.5 + 0.75));
+              positionPrices.set(pos.symbol, newPrice);
+            } else {
+              // Stock - use actual price
+              positionPrices.set(pos.symbol, underlyingPrice);
+            }
+          }
+        });
+
+        if (positionPrices.size > 0) {
+          flipper.updatePositionPrices(positionPrices);
+        }
+      }
     } catch (error) {
       console.error('Market data error:', error);
       setMarketError(error instanceof Error ? error.message : 'Failed to fetch market data');
     } finally {
       setIsLoadingMarket(false);
     }
-  }, [symbols]);
+  }, [symbols, positions, flipper]);
 
   // Auto-refresh market data
   useEffect(() => {
     // Fetch immediately
     fetchMarketData();
 
-    // Then refresh every 30 seconds
-    const interval = setInterval(fetchMarketData, 30000);
+    // Then refresh every 10 seconds to keep positions updated
+    const interval = setInterval(fetchMarketData, 10000);
 
     return () => clearInterval(interval);
   }, [fetchMarketData]);

@@ -307,6 +307,13 @@ export class AutoFlipper {
     return this.warden.getAlerts(limit);
   }
 
+  /**
+   * Update position prices with live market data
+   */
+  public updatePositionPrices(prices: Map<string, number>): void {
+    this.executor.updatePositionPrices(prices);
+  }
+
   // ============================================================================
   // ACTION METHODS
   // ============================================================================

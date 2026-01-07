@@ -314,37 +314,101 @@ export class Sentinel {
  */
 class MockDataProvider implements DataProvider {
   private priceState: Map<string, number> = new Map();
+  private candleCache: Map<string, Candle[]> = new Map();
+  private lastFetchTime: Map<string, number> = new Map();
 
   async fetchCandles(
     symbol: string,
     interval: CandleInterval,
     limit: number = 200
   ): Promise<Candle[]> {
+    const cacheKey = `${symbol}_${interval}`;
+    const now = Date.now();
+    const intervalMs = this.getIntervalMs(interval);
+
     // Initialize price if not exists
     if (!this.priceState.has(symbol)) {
       this.priceState.set(symbol, this.getBasePrice(symbol));
     }
 
+    // Check if we have cached candles
+    let candles = this.candleCache.get(cacheKey) || [];
+    const lastFetch = this.lastFetchTime.get(cacheKey) || 0;
+
+    // If first fetch or cache is empty, generate initial history
+    if (candles.length === 0) {
+      candles = this.generateInitialCandles(symbol, interval, limit);
+      this.candleCache.set(cacheKey, candles);
+      this.lastFetchTime.set(cacheKey, now);
+      return candles;
+    }
+
+    // Only add new candles if enough time has passed
+    const timeSinceLastFetch = now - lastFetch;
+    const candlesToAdd = Math.floor(timeSinceLastFetch / intervalMs);
+
+    if (candlesToAdd > 0) {
+      const lastCandle = candles[candles.length - 1];
+      let price = lastCandle.close;
+
+      // Add new candles with SMALL changes (0.1% max per candle)
+      for (let i = 0; i < Math.min(candlesToAdd, 5); i++) {
+        const volatility = 0.001; // 0.1% per candle - very stable
+        const change = price * volatility * (Math.random() * 2 - 1);
+        const open = price;
+        price += change;
+        const close = price;
+        const high = Math.max(open, close) * (1 + Math.random() * 0.0005);
+        const low = Math.min(open, close) * (1 - Math.random() * 0.0005);
+        const volume = Math.floor(100000 + Math.random() * 500000);
+
+        candles.push({
+          symbol,
+          interval,
+          timestamp: lastCandle.timestamp + (i + 1) * intervalMs,
+          open,
+          high,
+          low,
+          close,
+          volume,
+        });
+      }
+
+      // Keep only last 200 candles
+      if (candles.length > limit) {
+        candles = candles.slice(-limit);
+      }
+
+      this.candleCache.set(cacheKey, candles);
+      this.priceState.set(symbol, price);
+      this.lastFetchTime.set(cacheKey, now);
+    }
+
+    return candles;
+  }
+
+  private generateInitialCandles(
+    symbol: string,
+    interval: CandleInterval,
+    limit: number
+  ): Candle[] {
     const candles: Candle[] = [];
     const intervalMs = this.getIntervalMs(interval);
     const now = Date.now();
 
     let price = this.priceState.get(symbol)!;
 
-    // Add some trend bias to generate more signals
-    const trendBias = (Math.random() - 0.5) * 0.01; // Random trend direction
-
     for (let i = limit - 1; i >= 0; i--) {
       const timestamp = now - i * intervalMs;
 
-      // Generate realistic OHLCV with random walk + trend
-      const volatility = 0.008; // 0.8% per candle (increased from 0.2%)
-      const change = price * (volatility * (Math.random() * 2 - 1) + trendBias);
+      // Very small volatility for stable prices (0.05% per candle)
+      const volatility = 0.0005;
+      const change = price * volatility * (Math.random() * 2 - 1);
       const open = price;
       price += change;
       const close = price;
-      const high = Math.max(open, close) * (1 + Math.random() * 0.003);
-      const low = Math.min(open, close) * (1 - Math.random() * 0.003);
+      const high = Math.max(open, close) * (1 + Math.random() * 0.0003);
+      const low = Math.min(open, close) * (1 - Math.random() * 0.0003);
       const volume = Math.floor(100000 + Math.random() * 500000);
 
       candles.push({

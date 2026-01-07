@@ -208,11 +208,25 @@ export class Executor {
    */
   public async closePosition(
     positionId: string,
-    reason: string = 'Manual close'
+    _reason: string = 'Manual close'
   ): Promise<ExecutionResult> {
     const position = this.positions.get(positionId);
     if (!position) {
-      return { success: false, error: 'Position not found' };
+      // Try finding by symbol (positions tab passes symbol sometimes)
+      const bySymbol = Array.from(this.positions.values()).find(p => p.symbol === positionId || p.id === positionId);
+      if (!bySymbol) {
+        return { success: false, error: 'Position not found' };
+      }
+      // Use the found position
+      const closingOrder = this.createOrder(
+        bySymbol.symbol,
+        bySymbol.assetClass,
+        bySymbol.side === 'long' ? 'short' : 'long',
+        bySymbol.quantity,
+        bySymbol.optionContract
+      );
+      await this.simulateFill(closingOrder, bySymbol.currentPrice);
+      return { success: true, order: closingOrder };
     }
 
     // Create closing order
@@ -224,11 +238,8 @@ export class Executor {
       position.optionContract
     );
 
-    // Simulate fill
+    // Simulate fill - this handles all the position closing logic
     await this.simulateFill(closingOrder, position.currentPrice);
-
-    // Close the position
-    this.finalizePositionClose(position, closingOrder, reason);
 
     return { success: true, order: closingOrder };
   }
@@ -443,10 +454,12 @@ export class Executor {
       (p) => p.symbol === order.symbol
     );
 
+    const cost = order.avgFillPrice! * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
+
     if (existingPosition) {
       // Update existing position
       if (existingPosition.side === order.side) {
-        // Adding to position
+        // Adding to position - deduct buying power
         const totalCost =
           existingPosition.avgEntryPrice * existingPosition.quantity +
           order.avgFillPrice! * order.filledQuantity;
@@ -454,9 +467,21 @@ export class Executor {
 
         existingPosition.avgEntryPrice = totalCost / totalQty;
         existingPosition.quantity = totalQty;
+        this.buyingPower = Math.max(0, this.buyingPower - cost);
       } else {
-        // Closing position
+        // Closing position - ADD buying power back
+        const pnl = (order.avgFillPrice! - existingPosition.avgEntryPrice) *
+          order.filledQuantity *
+          (existingPosition.side === 'long' ? 1 : -1) *
+          (order.assetClass === 'option' ? 100 : 1);
+
         existingPosition.quantity -= order.filledQuantity;
+
+        // Return the original cost + P&L to buying power
+        const originalCost = existingPosition.avgEntryPrice * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
+        this.buyingPower += originalCost;
+        this.accountBalance += pnl;
+
         if (existingPosition.quantity <= 0) {
           this.positions.delete(existingPosition.id);
 
@@ -465,14 +490,16 @@ export class Executor {
             {
               position: existingPosition,
               closePrice: order.avgFillPrice,
-              pnl: existingPosition.unrealizedPnL,
+              pnl: pnl,
             },
             'executor'
           );
+
+          console.log(`[Executor] Position closed: ${existingPosition.symbol} | P&L: $${pnl.toFixed(2)}`);
         }
       }
     } else {
-      // Create new position
+      // Create new position - deduct buying power
       const position = this.createPosition(order);
       this.positions.set(position.id, position);
 
@@ -481,11 +508,9 @@ export class Executor {
       console.log(
         `[Executor] Position opened: ${position.side} ${position.quantity}x ${position.symbol}`
       );
-    }
 
-    // Update buying power (only deduct what we have)
-    const cost = order.avgFillPrice! * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
-    this.buyingPower = Math.max(0, this.buyingPower - cost);
+      this.buyingPower = Math.max(0, this.buyingPower - cost);
+    }
   }
 
   private createPosition(order: Order): Position {

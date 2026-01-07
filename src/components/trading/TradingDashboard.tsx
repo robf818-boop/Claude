@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Bot,
   Settings,
+  RotateCcw,
 } from 'lucide-react';
 import {
   AutoFlipper,
@@ -203,6 +204,13 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     }
   }, [flipper, autoTradeSettings]);
 
+  const handleResetAccount = useCallback(() => {
+    if (flipper && confirm('Reset account to $100,000? This will close all positions.')) {
+      flipper.resetAccount();
+      setAccountInfo({ balance: 100000, buyingPower: 100000, equity: 100000, openPnL: 0 });
+    }
+  }, [flipper]);
+
   // Fetch live market data from Alpaca
   const fetchMarketData = useCallback(async () => {
     setIsLoadingMarket(true);
@@ -347,6 +355,15 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
             title="Auto-trade settings"
           >
             <Settings className="w-4 h-4" />
+          </button>
+
+          {/* Reset Account */}
+          <button
+            onClick={handleResetAccount}
+            className="p-2 bg-orange-600 hover:bg-orange-700 rounded-lg transition"
+            title="Reset account to $100,000"
+          >
+            <RotateCcw className="w-4 h-4" />
           </button>
 
           <div className="w-px h-8 bg-gray-600" />

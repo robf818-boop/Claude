@@ -104,6 +104,17 @@ export class Executor {
   }
 
   /**
+   * Reset account to starting values
+   */
+  public resetAccount(): void {
+    this.accountBalance = 100000;
+    this.buyingPower = 100000;
+    this.positions.clear();
+    this.orders.clear();
+    console.log('[Executor] Account reset to $100,000');
+  }
+
+  /**
    * Get all orders
    */
   public getOrders(): Order[] {
@@ -334,34 +345,43 @@ export class Executor {
     signal: TradingSignal,
     optionContract?: OptionContract
   ): number {
-    const maxRiskAmount =
-      this.accountBalance * (signal.maxRiskPercent / 100);
+    // Use starting balance for sizing, not current (prevents runaway sizing)
+    const safeBalance = Math.min(Math.max(this.accountBalance, 10000), 100000);
+    const maxRiskAmount = safeBalance * (signal.maxRiskPercent / 100);
+
+    // Hard limit on single trade value
+    const maxTradeValue = 5000; // $5000 max per trade in paper mode
 
     if (optionContract) {
       // For options, calculate based on premium
       const premium = optionContract.ask * 100; // Per contract (100 shares)
-      const maxContracts = Math.floor(maxRiskAmount / premium);
+      if (premium <= 0) return 1;
+
+      const maxContracts = Math.floor(Math.min(maxRiskAmount, maxTradeValue) / premium);
 
       // Apply position limit
       const maxPositionValue =
-        this.accountBalance * (this.config.maxPositionPercent / 100);
-      const positionLimit = Math.floor(maxPositionValue / premium);
+        safeBalance * (this.config.maxPositionPercent / 100);
+      const positionLimit = Math.floor(Math.min(maxPositionValue, maxTradeValue) / premium);
 
       // Apply recommendation limit if available
-      const recLimit = signal.optionRecommendation?.contracts || Infinity;
+      const recLimit = signal.optionRecommendation?.contracts || 5;
 
-      return Math.min(maxContracts, positionLimit, recLimit, 10); // Max 10 contracts
+      return Math.max(1, Math.min(maxContracts, positionLimit, recLimit, 5)); // Max 5 contracts
     } else {
       // For stocks/futures, calculate based on stop loss
       const riskPerShare = Math.abs(signal.entry - signal.stopLoss);
-      const shares = Math.floor(maxRiskAmount / riskPerShare);
+      if (riskPerShare <= 0 || signal.entry <= 0) return 1;
+
+      const shares = Math.floor(Math.min(maxRiskAmount, maxTradeValue) / riskPerShare);
 
       // Apply position limit
       const maxPositionValue =
-        this.accountBalance * (this.config.maxPositionPercent / 100);
-      const positionLimit = Math.floor(maxPositionValue / signal.entry);
+        safeBalance * (this.config.maxPositionPercent / 100);
+      const positionLimit = Math.floor(Math.min(maxPositionValue, maxTradeValue) / signal.entry);
 
-      return Math.min(shares, positionLimit);
+      // Hard limit on shares
+      return Math.max(1, Math.min(shares, positionLimit, 50)); // Max 50 shares
     }
   }
 

@@ -367,6 +367,16 @@ export class AutoFlipper {
     return this.warden.acknowledgeAlert(alertId);
   }
 
+  /**
+   * Reset account to starting values ($100,000)
+   */
+  public resetAccount(): void {
+    this.executor.resetAccount();
+    this.autoTradeSettings.tradesToday = 0;
+    this.positionPeaks.clear();
+    console.log('[AutoFlipper] Account reset complete');
+  }
+
   // ============================================================================
   // AUTO-TRADE METHODS
   // ============================================================================

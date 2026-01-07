@@ -253,20 +253,8 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
       setMarketData(data);
       setLastUpdate(new Date());
 
-      // Update position prices in the flipper - use STABLE small changes only
-      if (flipper && positions.length > 0) {
-        const positionPrices = new Map<string, number>();
-        positions.forEach(pos => {
-          // Only make tiny price adjustments (0.1% max) to avoid wild swings
-          const smallChange = pos.currentPrice * 0.001 * (Math.random() * 2 - 1);
-          const newPrice = Math.max(0.01, pos.currentPrice + smallChange);
-          positionPrices.set(pos.symbol, newPrice);
-        });
-
-        if (positionPrices.size > 0) {
-          flipper.updatePositionPrices(positionPrices);
-        }
-      }
+      // DON'T update position prices - keep them stable at entry price
+      // This prevents the wild swings from the mock data system
     } catch (error) {
       console.error('Market data error:', error);
       setMarketError(error instanceof Error ? error.message : 'Failed to fetch market data');

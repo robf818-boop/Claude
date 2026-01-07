@@ -342,46 +342,16 @@ export class Executor {
   // Position Sizing
 
   private calculatePositionSize(
-    signal: TradingSignal,
+    _signal: TradingSignal,
     optionContract?: OptionContract
   ): number {
-    // Use starting balance for sizing, not current (prevents runaway sizing)
-    const safeBalance = Math.min(Math.max(this.accountBalance, 10000), 100000);
-    const maxRiskAmount = safeBalance * (signal.maxRiskPercent / 100);
-
-    // Hard limit on single trade value
-    const maxTradeValue = 5000; // $5000 max per trade in paper mode
+    // VERY conservative fixed position sizing for paper trading
+    // Keep positions small and predictable
 
     if (optionContract) {
-      // For options, calculate based on premium
-      const premium = optionContract.ask * 100; // Per contract (100 shares)
-      if (premium <= 0) return 1;
-
-      const maxContracts = Math.floor(Math.min(maxRiskAmount, maxTradeValue) / premium);
-
-      // Apply position limit
-      const maxPositionValue =
-        safeBalance * (this.config.maxPositionPercent / 100);
-      const positionLimit = Math.floor(Math.min(maxPositionValue, maxTradeValue) / premium);
-
-      // Apply recommendation limit if available
-      const recLimit = signal.optionRecommendation?.contracts || 5;
-
-      return Math.max(1, Math.min(maxContracts, positionLimit, recLimit, 5)); // Max 5 contracts
+      return 2; // Always 2 option contracts
     } else {
-      // For stocks/futures, calculate based on stop loss
-      const riskPerShare = Math.abs(signal.entry - signal.stopLoss);
-      if (riskPerShare <= 0 || signal.entry <= 0) return 1;
-
-      const shares = Math.floor(Math.min(maxRiskAmount, maxTradeValue) / riskPerShare);
-
-      // Apply position limit
-      const maxPositionValue =
-        safeBalance * (this.config.maxPositionPercent / 100);
-      const positionLimit = Math.floor(Math.min(maxPositionValue, maxTradeValue) / signal.entry);
-
-      // Hard limit on shares
-      return Math.max(1, Math.min(shares, positionLimit, 50)); // Max 50 shares
+      return 10; // Always 10 shares of stock
     }
   }
 

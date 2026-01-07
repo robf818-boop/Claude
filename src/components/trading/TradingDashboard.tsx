@@ -18,6 +18,9 @@ import {
   TrendingDown,
   TrendingUp,
   Zap,
+  Wifi,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import {
   AutoFlipper,
@@ -29,6 +32,17 @@ import {
   CircuitBreaker,
   RiskAlert,
 } from '../../trading';
+import { getAlpacaProvider } from '../../trading/sentinel/AlpacaProvider';
+
+interface MarketData {
+  symbol: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  bid: number;
+  ask: number;
+  volume: number;
+}
 
 interface TradingDashboardProps {
   symbols?: string[];
@@ -57,7 +71,14 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
   });
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'signals' | 'positions' | 'risk'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'market' | 'signals' | 'positions' | 'risk'>('overview');
+
+  // Market data state
+  const [marketData, setMarketData] = useState<MarketData[]>([]);
+  const [isMarketOpen, setIsMarketOpen] = useState(false);
+  const [isLoadingMarket, setIsLoadingMarket] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   // Initialize AutoFlipper
   useEffect(() => {
@@ -149,6 +170,55 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     }
   }, [flipper]);
 
+  // Fetch live market data from Alpaca
+  const fetchMarketData = useCallback(async () => {
+    setIsLoadingMarket(true);
+    setMarketError(null);
+
+    try {
+      const alpaca = getAlpacaProvider();
+
+      // Get market clock
+      const clock = await alpaca.getClock();
+      setIsMarketOpen(clock.isOpen);
+
+      // Get snapshots for all symbols
+      const snapshots = await alpaca.fetchSnapshots(symbols);
+
+      const data: MarketData[] = [];
+      snapshots.forEach((snapshot, symbol) => {
+        data.push({
+          symbol,
+          price: snapshot.price,
+          change: snapshot.change,
+          changePercent: snapshot.changePercent,
+          bid: snapshot.bid,
+          ask: snapshot.ask,
+          volume: snapshot.volume,
+        });
+      });
+
+      setMarketData(data);
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Market data error:', error);
+      setMarketError(error instanceof Error ? error.message : 'Failed to fetch market data');
+    } finally {
+      setIsLoadingMarket(false);
+    }
+  }, [symbols]);
+
+  // Auto-refresh market data
+  useEffect(() => {
+    // Fetch immediately
+    fetchMarketData();
+
+    // Then refresh every 30 seconds
+    const interval = setInterval(fetchMarketData, 30000);
+
+    return () => clearInterval(interval);
+  }, [fetchMarketData]);
+
   // Render helpers
   const getRiskLevelColor = (level: string) => {
     switch (level) {
@@ -171,10 +241,14 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <Zap className="w-8 h-8 text-yellow-400" />
-          <h1 className="text-2xl font-bold">AutoFlipper Trading Dashboard</h1>
+          <h1 className="text-2xl font-bold">AutoFlipper</h1>
           {paperTrading && (
             <span className="px-2 py-1 bg-blue-600 text-xs rounded">PAPER</span>
           )}
+          <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${isMarketOpen ? 'bg-green-600' : 'bg-gray-600'}`}>
+            {isMarketOpen ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+            {isMarketOpen ? 'MARKET OPEN' : 'MARKET CLOSED'}
+          </div>
         </div>
 
         {/* Control Buttons */}
@@ -274,7 +348,7 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
 
       {/* Tabs */}
       <div className="flex gap-2 mb-4 border-b border-gray-700 pb-2">
-        {(['overview', 'signals', 'positions', 'risk'] as const).map((tab) => (
+        {(['overview', 'market', 'signals', 'positions', 'risk'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -296,6 +370,15 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
             signals={signals}
             positions={positions}
             alerts={alerts}
+          />
+        )}
+        {activeTab === 'market' && (
+          <MarketTab
+            data={marketData}
+            isLoading={isLoadingMarket}
+            error={marketError}
+            lastUpdate={lastUpdate}
+            onRefresh={fetchMarketData}
           />
         )}
         {activeTab === 'signals' && (
@@ -376,6 +459,71 @@ const MetricCard: React.FC<{
     <div className={`text-2xl font-bold ${valueColor}`}>{value}</div>
     {subtitle && (
       <div className="text-xs text-gray-500 uppercase">{subtitle}</div>
+    )}
+  </div>
+);
+
+const MarketTab: React.FC<{
+  data: MarketData[];
+  isLoading: boolean;
+  error: string | null;
+  lastUpdate: Date | null;
+  onRefresh: () => void;
+}> = ({ data, isLoading, error, lastUpdate, onRefresh }) => (
+  <div>
+    <div className="flex justify-between items-center mb-4">
+      <div className="flex items-center gap-4">
+        <h3 className="text-lg font-semibold">Live Market Data</h3>
+        {lastUpdate && (
+          <span className="text-xs text-gray-500">
+            Updated: {lastUpdate.toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+      <button
+        onClick={onRefresh}
+        disabled={isLoading}
+        className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition disabled:opacity-50"
+      >
+        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+        Refresh
+      </button>
+    </div>
+
+    {error && (
+      <div className="p-4 bg-red-900/30 border border-red-500 rounded-lg mb-4">
+        <p className="text-red-400">{error}</p>
+        <p className="text-xs text-gray-400 mt-1">Make sure your Alpaca API keys are configured in Netlify environment variables.</p>
+      </div>
+    )}
+
+    {data.length === 0 && !error ? (
+      <div className="text-center py-8 text-gray-500">
+        {isLoading ? 'Loading market data...' : 'No market data available. Click Refresh to fetch.'}
+      </div>
+    ) : (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        {data.map((item) => (
+          <div key={item.symbol} className="bg-gray-700 rounded-lg p-4">
+            <div className="flex justify-between items-start mb-2">
+              <span className="font-bold text-lg">{item.symbol}</span>
+              <span className={`text-xs px-2 py-1 rounded ${item.changePercent >= 0 ? 'bg-green-600' : 'bg-red-600'}`}>
+                {item.changePercent >= 0 ? '+' : ''}{item.changePercent.toFixed(2)}%
+              </span>
+            </div>
+            <div className="text-2xl font-bold mb-2">
+              ${item.price.toFixed(2)}
+            </div>
+            <div className={`text-sm ${item.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              <div>Bid: ${item.bid.toFixed(2)} | Ask: ${item.ask.toFixed(2)}</div>
+              <div>Vol: {(item.volume / 1000000).toFixed(2)}M</div>
+            </div>
+          </div>
+        ))}
+      </div>
     )}
   </div>
 );

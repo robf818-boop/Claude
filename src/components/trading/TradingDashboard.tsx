@@ -21,6 +21,8 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  Bot,
+  Settings,
 } from 'lucide-react';
 import {
   AutoFlipper,
@@ -72,6 +74,17 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
 
   // Active tab
   const [activeTab, setActiveTab] = useState<'overview' | 'market' | 'signals' | 'positions' | 'risk'>('overview');
+
+  // Auto-trade state
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
+  const [autoTradeSettings, setAutoTradeSettings] = useState({
+    minConfluenceScore: 60,
+    minStrength: 'moderate' as 'weak' | 'moderate' | 'strong' | 'extreme',
+    maxDailyTrades: 10,
+    maxConcurrentPositions: 5,
+    tradesToday: 0,
+  });
+  const [showAutoTradeSettings, setShowAutoTradeSettings] = useState(false);
 
   // Market data state
   const [marketData, setMarketData] = useState<MarketData[]>([]);
@@ -170,6 +183,22 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     }
   }, [flipper]);
 
+  const handleToggleAutoTrade = useCallback(() => {
+    if (flipper) {
+      const newState = !autoTradeEnabled;
+      flipper.setAutoTrade(newState);
+      setAutoTradeEnabled(newState);
+    }
+  }, [flipper, autoTradeEnabled]);
+
+  const handleUpdateAutoTradeSettings = useCallback((newSettings: Partial<typeof autoTradeSettings>) => {
+    if (flipper) {
+      const updated = { ...autoTradeSettings, ...newSettings };
+      setAutoTradeSettings(updated);
+      flipper.updateAutoTradeSettings(updated);
+    }
+  }, [flipper, autoTradeSettings]);
+
   // Fetch live market data from Alpaca
   const fetchMarketData = useCallback(async () => {
     setIsLoadingMarket(true);
@@ -252,7 +281,33 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
         </div>
 
         {/* Control Buttons */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Auto-Trade Toggle */}
+          <div className="relative">
+            <button
+              onClick={handleToggleAutoTrade}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+                autoTradeEnabled
+                  ? 'bg-purple-600 hover:bg-purple-700'
+                  : 'bg-gray-600 hover:bg-gray-700'
+              }`}
+            >
+              <Bot className="w-4 h-4" />
+              Auto {autoTradeEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          {/* Auto-Trade Settings */}
+          <button
+            onClick={() => setShowAutoTradeSettings(!showAutoTradeSettings)}
+            className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
+            title="Auto-trade settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          <div className="w-px h-8 bg-gray-600" />
+
           {!systemStatus?.isRunning ? (
             <button
               onClick={handleStart}
@@ -290,6 +345,67 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Auto-Trade Settings Panel */}
+      {showAutoTradeSettings && (
+        <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-700">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Bot className="w-5 h-5 text-purple-400" />
+            Auto-Trade Settings
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Min Confluence Score</label>
+              <input
+                type="number"
+                value={autoTradeSettings.minConfluenceScore}
+                onChange={(e) => handleUpdateAutoTradeSettings({ minConfluenceScore: parseInt(e.target.value) || 50 })}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                min={30}
+                max={100}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Min Signal Strength</label>
+              <select
+                value={autoTradeSettings.minStrength}
+                onChange={(e) => handleUpdateAutoTradeSettings({ minStrength: e.target.value as typeof autoTradeSettings.minStrength })}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+              >
+                <option value="weak">Weak</option>
+                <option value="moderate">Moderate</option>
+                <option value="strong">Strong</option>
+                <option value="extreme">Extreme</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Max Daily Trades</label>
+              <input
+                type="number"
+                value={autoTradeSettings.maxDailyTrades}
+                onChange={(e) => handleUpdateAutoTradeSettings({ maxDailyTrades: parseInt(e.target.value) || 5 })}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                min={1}
+                max={50}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Max Concurrent Positions</label>
+              <input
+                type="number"
+                value={autoTradeSettings.maxConcurrentPositions}
+                onChange={(e) => handleUpdateAutoTradeSettings({ maxConcurrentPositions: parseInt(e.target.value) || 3 })}
+                className="w-full bg-gray-700 rounded px-3 py-2 text-white"
+                min={1}
+                max={20}
+              />
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-gray-400">
+            Auto-trade today: {autoTradeSettings.tradesToday} / {autoTradeSettings.maxDailyTrades}
+          </div>
+        </div>
+      )}
 
       {/* Module Status Bar */}
       <div className="grid grid-cols-4 gap-4 mb-6">

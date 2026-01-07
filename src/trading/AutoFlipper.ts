@@ -53,6 +53,22 @@ export class AutoFlipper {
     errorCount: 0,
   };
 
+  // Auto-trade state
+  private autoTradeEnabled: boolean = false;
+  private autoTradeSettings: {
+    minConfluenceScore: number;
+    minStrength: 'weak' | 'moderate' | 'strong' | 'extreme';
+    maxDailyTrades: number;
+    maxConcurrentPositions: number;
+    tradesToday: number;
+  } = {
+    minConfluenceScore: 60,
+    minStrength: 'moderate',
+    maxDailyTrades: 10,
+    maxConcurrentPositions: 5,
+    tradesToday: 0,
+  };
+
   // Event listeners for external callbacks
   private eventListeners: Map<string, ((event: TradingEvent) => void)[]> = new Map();
 
@@ -327,6 +343,115 @@ export class AutoFlipper {
   }
 
   // ============================================================================
+  // AUTO-TRADE METHODS
+  // ============================================================================
+
+  /**
+   * Enable or disable auto-trading
+   */
+  public setAutoTrade(enabled: boolean): void {
+    this.autoTradeEnabled = enabled;
+    console.log(`[AutoFlipper] Auto-trade ${enabled ? 'ENABLED' : 'DISABLED'}`);
+
+    // Reset daily counter at start of day
+    if (enabled) {
+      this.autoTradeSettings.tradesToday = 0;
+    }
+  }
+
+  /**
+   * Check if auto-trade is enabled
+   */
+  public isAutoTradeEnabled(): boolean {
+    return this.autoTradeEnabled;
+  }
+
+  /**
+   * Get auto-trade settings
+   */
+  public getAutoTradeSettings(): typeof this.autoTradeSettings {
+    return { ...this.autoTradeSettings };
+  }
+
+  /**
+   * Update auto-trade settings
+   */
+  public updateAutoTradeSettings(settings: Partial<typeof this.autoTradeSettings>): void {
+    this.autoTradeSettings = { ...this.autoTradeSettings, ...settings };
+    console.log('[AutoFlipper] Auto-trade settings updated:', this.autoTradeSettings);
+  }
+
+  /**
+   * Handle automatic signal execution
+   */
+  private async handleAutoTrade(signal: TradingSignal): Promise<void> {
+    // Check if auto-trade is enabled
+    if (!this.autoTradeEnabled) {
+      return;
+    }
+
+    // Check if system is paused
+    if (this.systemStatus.isPaused) {
+      console.log('[AutoFlipper] Auto-trade skipped: System paused');
+      return;
+    }
+
+    // Check daily trade limit
+    if (this.autoTradeSettings.tradesToday >= this.autoTradeSettings.maxDailyTrades) {
+      console.log('[AutoFlipper] Auto-trade skipped: Daily trade limit reached');
+      return;
+    }
+
+    // Check concurrent positions limit
+    const positions = this.executor.getPositions();
+    if (positions.length >= this.autoTradeSettings.maxConcurrentPositions) {
+      console.log('[AutoFlipper] Auto-trade skipped: Max concurrent positions reached');
+      return;
+    }
+
+    // Check if we already have a position in this symbol
+    const existingPosition = positions.find(p => p.symbol === signal.symbol);
+    if (existingPosition) {
+      console.log(`[AutoFlipper] Auto-trade skipped: Already have position in ${signal.symbol}`);
+      return;
+    }
+
+    // Check confluence score
+    if (signal.confluenceScore < this.autoTradeSettings.minConfluenceScore) {
+      console.log(`[AutoFlipper] Auto-trade skipped: Confluence ${signal.confluenceScore} below minimum ${this.autoTradeSettings.minConfluenceScore}`);
+      return;
+    }
+
+    // Check signal strength
+    const strengthOrder = ['weak', 'moderate', 'strong', 'extreme'];
+    const signalStrengthIndex = strengthOrder.indexOf(signal.strength);
+    const minStrengthIndex = strengthOrder.indexOf(this.autoTradeSettings.minStrength);
+    if (signalStrengthIndex < minStrengthIndex) {
+      console.log(`[AutoFlipper] Auto-trade skipped: Strength ${signal.strength} below minimum ${this.autoTradeSettings.minStrength}`);
+      return;
+    }
+
+    // Check if trading is allowed (risk checks)
+    const canTrade = this.canTrade();
+    if (!canTrade.allowed) {
+      console.log(`[AutoFlipper] Auto-trade skipped: ${canTrade.reason}`);
+      return;
+    }
+
+    // Execute the trade!
+    console.log(`[AutoFlipper] AUTO-EXECUTING: ${signal.direction.toUpperCase()} ${signal.symbol} (confluence: ${signal.confluenceScore}, strength: ${signal.strength})`);
+
+    const result = await this.executeSignal(signal.id);
+
+    if (result.success) {
+      this.autoTradeSettings.tradesToday++;
+      console.log(`[AutoFlipper] Auto-trade SUCCESS: Order ${result.order?.id} | Trades today: ${this.autoTradeSettings.tradesToday}`);
+    } else {
+      console.log(`[AutoFlipper] Auto-trade FAILED: ${result.error}`);
+    }
+  }
+
+  // ============================================================================
   // EVENT SUBSCRIPTION
   // ============================================================================
 
@@ -398,6 +523,15 @@ export class AutoFlipper {
             break;
         }
       }
+    );
+
+    // Handle auto-trading on new signals
+    this.eventBus.subscribe<TradingSignal>(
+      ['signal_generated'],
+      (event) => {
+        this.handleAutoTrade(event.data);
+      },
+      100 // High priority - execute quickly
     );
   }
 

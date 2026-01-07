@@ -483,9 +483,9 @@ export class Executor {
       );
     }
 
-    // Update buying power
+    // Update buying power (only deduct what we have)
     const cost = order.avgFillPrice! * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
-    this.buyingPower -= cost;
+    this.buyingPower = Math.max(0, this.buyingPower - cost);
   }
 
   private createPosition(order: Order): Position {

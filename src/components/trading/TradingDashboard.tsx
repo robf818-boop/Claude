@@ -23,7 +23,6 @@ import {
   RefreshCw,
   Bot,
   Settings,
-  RotateCcw,
 } from 'lucide-react';
 import {
   AutoFlipper,
@@ -109,13 +108,13 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     });
 
     instance.on('position_opened', () => {
-      setPositions(instance.getPositions());
-      setAccountInfo(instance.getAccountInfo());
+      // Positions and account info come from Alpaca, not internal state
+      // Just trigger a refresh
     });
 
     instance.on('position_closed', () => {
-      setPositions(instance.getPositions());
-      setAccountInfo(instance.getAccountInfo());
+      // Positions and account info come from Alpaca, not internal state
+      // Just trigger a refresh
     });
 
     instance.on('risk_alert', () => {
@@ -127,18 +126,18 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     };
   }, [symbols, paperTrading]);
 
-  // Refresh state periodically
+  // Refresh state periodically (but NOT account info - that comes from Alpaca)
   useEffect(() => {
     if (!flipper) return;
 
     const interval = setInterval(() => {
       setSystemStatus(flipper.getStatus());
-      setPositions(flipper.getPositions());
+      // Don't override positions from Alpaca
       setSignals(flipper.getActiveSignals());
       setRiskMetrics(flipper.getRiskMetrics());
       setCircuitBreakers(flipper.getCircuitBreakers());
       setAlerts(flipper.getAlerts(20));
-      setAccountInfo(flipper.getAccountInfo());
+      // Account info comes from Alpaca, not flipper
     }, 1000);
 
     return () => clearInterval(interval);
@@ -204,13 +203,6 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
     }
   }, [flipper, autoTradeSettings]);
 
-  const handleResetAccount = useCallback(() => {
-    if (flipper && confirm('Reset account to $100,000? This will close all positions.')) {
-      flipper.resetAccount();
-      setAccountInfo({ balance: 100000, buyingPower: 100000, equity: 100000, openPnL: 0 });
-    }
-  }, [flipper]);
-
   // Fetch live market data from Alpaca
   const fetchMarketData = useCallback(async () => {
     setIsLoadingMarket(true);
@@ -223,19 +215,45 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
       const clock = await alpaca.getClock();
       setIsMarketOpen(clock.isOpen);
 
-      // Get all symbols to fetch (watchlist + positions)
-      const positionSymbols = positions.map(p => {
-        // Extract base symbol from option contracts (e.g., "QQQ260114P00428610" -> "QQQ")
-        const match = p.symbol.match(/^([A-Z]+)/);
-        return match ? match[1] : p.symbol;
+      // Get REAL account data from Alpaca
+      const account = await alpaca.getAccount();
+      setAccountInfo({
+        balance: account.cash,
+        buyingPower: account.buyingPower,
+        equity: account.equity,
+        openPnL: account.portfolioValue - account.cash,
       });
+
+      // Get REAL positions from Alpaca
+      const alpacaPositions = await alpaca.getPositions();
+
+      // Convert Alpaca positions to our Position format
+      const convertedPositions: Position[] = alpacaPositions.map((p, index) => ({
+        id: `alpaca-${p.symbol}-${index}`,
+        symbol: p.symbol,
+        assetClass: 'equity' as const,
+        side: p.qty > 0 ? 'long' as const : 'short' as const,
+        quantity: Math.abs(p.qty),
+        avgEntryPrice: p.avgEntryPrice,
+        currentPrice: p.currentPrice,
+        unrealizedPnL: p.unrealizedPnL,
+        unrealizedPnLPercent: p.unrealizedPnLPercent,
+        realizedPnL: 0,
+        openedAt: Date.now(),
+        lastUpdated: Date.now(),
+        signalId: 'manual',
+        isOption: false,
+      }));
+      setPositions(convertedPositions);
+
+      // Get all symbols to fetch (watchlist + Alpaca positions)
+      const positionSymbols = alpacaPositions.map(p => p.symbol);
       const allSymbols = [...new Set([...symbols, ...positionSymbols])];
 
       // Get snapshots for all symbols
       const snapshots = await alpaca.fetchSnapshots(allSymbols);
 
       const data: MarketData[] = [];
-      const priceMap = new Map<string, number>();
 
       snapshots.forEach((snapshot, symbol) => {
         data.push({
@@ -247,21 +265,17 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
           ask: snapshot.ask,
           volume: snapshot.volume,
         });
-        priceMap.set(symbol, snapshot.price);
       });
 
       setMarketData(data);
       setLastUpdate(new Date());
-
-      // DON'T update position prices - keep them stable at entry price
-      // This prevents the wild swings from the mock data system
     } catch (error) {
       console.error('Market data error:', error);
       setMarketError(error instanceof Error ? error.message : 'Failed to fetch market data');
     } finally {
       setIsLoadingMarket(false);
     }
-  }, [symbols, positions, flipper]);
+  }, [symbols]);
 
   // Auto-refresh market data
   useEffect(() => {
@@ -332,14 +346,7 @@ export const TradingDashboard: React.FC<TradingDashboardProps> = ({
             <Settings className="w-4 h-4" />
           </button>
 
-          {/* Reset Account */}
-          <button
-            onClick={handleResetAccount}
-            className="p-2 bg-orange-600 hover:bg-orange-700 rounded-lg transition"
-            title="Reset account to $100,000"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
+          {/* Reset account button removed - using real Alpaca data */}
 
           <div className="w-px h-8 bg-gray-600" />
 

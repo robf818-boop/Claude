@@ -127,7 +127,6 @@ function App() {
                   <BaseballField
                     positions={currentSituation.positions}
                     runners={currentSituation.runners}
-                    showInstructions={true}
                     selectedPosition={selectedPosition}
                   />
                 </div>

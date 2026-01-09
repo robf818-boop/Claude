@@ -240,10 +240,10 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
               <circle
                 cx={playerPos.x}
                 cy={playerPos.y}
-                r={isSelected ? "22" : "18"}
+                r={isSelected ? "16" : "12"}
                 fill={isSelected ? "#3b82f6" : "#ef4444"}
                 stroke={isSelected ? "#1d4ed8" : "#991b1b"}
-                strokeWidth={isSelected ? "3" : "2.5"}
+                strokeWidth={isSelected ? "2.5" : "2"}
                 className="cursor-pointer transition-all"
               />
 
@@ -254,7 +254,7 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="#fff"
-                fontSize="13"
+                fontSize="10"
                 fontWeight="bold"
                 className="pointer-events-none select-none"
               >

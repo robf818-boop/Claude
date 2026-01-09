@@ -5,12 +5,16 @@ interface BaseballFieldProps {
   positions?: PlayerPositions;
   runners?: BaseRunners;
   selectedPosition?: string | null;
+  ballLocation?: string;
+  playType?: string;
 }
 
 export const BaseballField: React.FC<BaseballFieldProps> = ({
   positions,
   runners = { first: false, second: false, third: false },
   selectedPosition = null,
+  ballLocation,
+  playType,
 }) => {
   const viewBox = 600;
   const center = viewBox / 2;
@@ -37,6 +41,40 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
       y: ((100 - y) / 100) * viewBox, // Invert Y so higher numbers are at bottom
     };
   };
+
+  // Determine ball position based on ballLocation
+  const getBallPosition = () => {
+    if (!ballLocation) return null;
+
+    switch (ballLocation) {
+      case 'deep-right':
+        return toFieldCoords(84, 18);
+      case 'deep-left':
+        return toFieldCoords(16, 18);
+      case 'center':
+        return toFieldCoords(50, 15);
+      case 'left-center-gap':
+        return toFieldCoords(35, 18);
+      case 'right-center-gap':
+        return toFieldCoords(65, 18);
+      case 'shortstop':
+        return toFieldCoords(42, 48);
+      case 'second-base':
+        return toFieldCoords(58, 48);
+      case 'third-base':
+        return toFieldCoords(32, 60);
+      case 'first-base':
+        return toFieldCoords(68, 60);
+      case 'infield':
+        return toFieldCoords(50, 55);
+      case 'outfield':
+        return toFieldCoords(50, 20);
+      default:
+        return null;
+    }
+  };
+
+  const ballPos = getBallPosition();
 
   return (
     <div className="relative w-full">
@@ -227,6 +265,41 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
         />
         {runners.third && (
           <circle cx={third.x} cy={third.y} r="6" fill="#f59e0b" />
+        )}
+
+        {/* Ball Path Indicator */}
+        {ballPos && playType && (
+          <g opacity="0.7">
+            {/* Ball trajectory line */}
+            {(playType === 'fly-ball' || playType === 'ground-ball' || playType === 'extra-base-hit') && (
+              <line
+                x1={home.x}
+                y1={home.y - 10}
+                x2={ballPos.x}
+                y2={ballPos.y}
+                stroke="#ffd700"
+                strokeWidth="2"
+                strokeDasharray="6,4"
+                opacity="0.6"
+              />
+            )}
+
+            {/* Ball marker */}
+            <circle
+              cx={ballPos.x}
+              cy={ballPos.y}
+              r="8"
+              fill="#fff"
+              stroke="#ffd700"
+              strokeWidth="2"
+            />
+            <circle
+              cx={ballPos.x}
+              cy={ballPos.y}
+              r="4"
+              fill="#ffd700"
+            />
+          </g>
         )}
 
         {/* Players */}

@@ -128,6 +128,8 @@ function App() {
                     positions={currentSituation.positions}
                     runners={currentSituation.runners}
                     selectedPosition={selectedPosition}
+                    ballLocation={currentSituation.ballLocation}
+                    playType={currentSituation.playType}
                   />
                 </div>
               ) : (

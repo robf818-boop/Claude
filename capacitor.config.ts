@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.unitiq.enterprise',
+  appId: 'com.unitiq.fieldservice.pro',
   appName: 'UnitIQ',
   webDir: 'dist',
   server: {

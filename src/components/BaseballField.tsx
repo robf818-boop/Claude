@@ -36,9 +36,10 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
   const toFieldCoords = (x: number, y: number) => {
     // x: 0 = left edge, 50 = center, 100 = right edge
     // y: 0 = top (outfield), 100 = bottom (home plate)
+    // Our data: y=15 is outfield, y=85 is home plate
     return {
       x: (x / 100) * viewBox,
-      y: ((100 - y) / 100) * viewBox, // Invert Y so higher numbers are at bottom
+      y: (y / 100) * viewBox, // Direct mapping: higher y = lower on screen
     };
   };
 

@@ -47,5 +47,7 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>UnitIQ needs camera access to scan barcodes on HVAC unit data plates</string>
 </dict>
 </plist>

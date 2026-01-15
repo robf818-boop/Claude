@@ -18,10 +18,10 @@ import {
 import { Html5Qrcode } from 'html5-qrcode';
 import * as XLSX from 'xlsx';
 import {
-  Scan, Search, Users, Wifi, ArrowLeft, ChevronRight,
+  Scan, Search, ArrowLeft, ChevronRight,
   Calculator, Book, MapPin, Tag, Video, Briefcase,
   AlertTriangle, Send, Package, Download, FileText,
-  Shield, Calendar, Wrench, Image, CheckCircle2, XCircle, X
+  Wrench, Image, CheckCircle2, XCircle, X, ExternalLink
 } from 'lucide-react';
 
 // --- TYPES ---
@@ -30,12 +30,11 @@ interface Part {
   number: string; // Part number on diagram
   name: string;
   oemPartNumber: string;
-  substitutions: string[]; // Alternative part numbers
+  substitutions: string[]; // Alternative part numbers/revisions
   oemCost: number;
   retailPrice: number;
-  category: string; // 'compressor', 'motor', 'coil', etc.
-  warrantyEligible: boolean;
-  diagramPosition?: { top: string; left: string }; // Position on exploded diagram
+  category: string;
+  diagramPosition?: { top: string; left: string };
 }
 
 interface TroubleshootingStep {
@@ -43,45 +42,27 @@ interface TroubleshootingStep {
   question: string;
   yesNext?: number;
   noNext?: number;
-  action?: string; // Final recommendation
+  action?: string;
 }
 
-interface UnitData {
-  serial: string;
+interface ModelData {
   model: string;
   brand: string;
   productName: string;
-  installDate: string;
-  shippedDate: string;
-  owner: string; // Masked for privacy
-  dateTransferred: string;
-  warrantyPolicy: string;
-  warrantyStatus: 'Active' | 'Expired' | 'Limited';
   parts: Part[];
-  diagramUrl: string; // URL to exploded diagram image
+  diagramUrl: string;
   troubleshooting: { [partId: string]: TroubleshootingStep[] };
   literatureUrls: {
     installation?: string;
     diagnostic?: string;
-    warranty?: string;
     productData?: string;
-    all?: string;
+    serviceBulletins?: string;
   };
-  serviceHistory: ServiceRecord[];
-}
-
-interface ServiceRecord {
-  date: string;
-  tech: string;
-  partReplaced: string;
-  type: 'Warranty' | 'Service Call';
-  status: string;
 }
 
 interface SelectedPart extends Part {
   quantity: number;
   notes: string;
-  troubleshootingComplete: boolean;
 }
 
 interface Order {
@@ -107,11 +88,23 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Parse serial number to extract model (basic logic - can be enhanced)
+function parseSerialToModel(serial: string): string {
+  // Most HVAC serials contain model info
+  // Example: "2620E31113" might map to model "186CNVO24000FAAA"
+  // This is brand-specific logic you'll customize
+
+  // For now, just return the serial as-is for lookup
+  // In production, add brand-specific parsing logic
+  return serial.toUpperCase();
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [view, setView] = useState<'field' | 'office'>('field');
   const [screen, setScreen] = useState('home');
-  const [unitData, setUnitData] = useState<UnitData | null>(null);
+  const [modelData, setModelData] = useState<ModelData | null>(null);
+  const [scannedSerial, setScannedSerial] = useState('');
   const [selectedParts, setSelectedParts] = useState<SelectedPart[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,7 +143,7 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Scan barcode using device camera
+  // Scan barcode
   const handleScan = async () => {
     try {
       setScanning(true);
@@ -166,13 +159,11 @@ export default function App() {
           qrbox: { width: 250, height: 250 }
         },
         (decodedText) => {
-          // Success callback
           qrCodeScanner.stop();
           setScanning(false);
-          lookupUnit(decodedText);
+          lookupModel(decodedText);
         },
         (errorMessage) => {
-          // Error callback - just log, don't show to user
           console.log("Scan error:", errorMessage);
         }
       );
@@ -182,7 +173,6 @@ export default function App() {
     }
   };
 
-  // Stop scanning
   const stopScan = async () => {
     if (html5QrCode) {
       try {
@@ -194,22 +184,30 @@ export default function App() {
     setScanning(false);
   };
 
-
-  // Look up unit by serial or model number
-  const lookupUnit = async (query: string) => {
+  // Look up model by serial or model number
+  const lookupModel = async (query: string) => {
     try {
       setLoading(true);
       setError('');
+      setScannedSerial(query);
 
-      // Query Firebase for unit data
-      const unitDoc = doc(db, 'artifacts', appId, 'public', 'data', 'units', query.trim().toUpperCase());
-      const unitSnap = await getDoc(unitDoc);
+      // Try direct model lookup first
+      let lookupKey = query.trim().toUpperCase();
+      let modelDoc = doc(db, 'artifacts', appId, 'public', 'data', 'models', lookupKey);
+      let modelSnap = await getDoc(modelDoc);
 
-      if (unitSnap.exists()) {
-        setUnitData(unitSnap.data() as UnitData);
+      // If not found, try parsing serial to get model
+      if (!modelSnap.exists()) {
+        lookupKey = parseSerialToModel(query);
+        modelDoc = doc(db, 'artifacts', appId, 'public', 'data', 'models', lookupKey);
+        modelSnap = await getDoc(modelDoc);
+      }
+
+      if (modelSnap.exists()) {
+        setModelData(modelSnap.data() as ModelData);
         setScreen('product-details');
       } else {
-        setError(`Unit ${query} not found in database. Please check the serial/model number.`);
+        setError(`Model not found for "${query}". Add this model to your database.`);
       }
 
       setLoading(false);
@@ -219,14 +217,12 @@ export default function App() {
     }
   };
 
-  // Handle search
   const handleSearch = () => {
     if (searchQuery.trim()) {
-      lookupUnit(searchQuery);
+      lookupModel(searchQuery);
     }
   };
 
-  // Add part to order
   const addPartToOrder = (part: Part) => {
     const existing = selectedParts.find(p => p.id === part.id);
     if (existing) {
@@ -237,29 +233,26 @@ export default function App() {
       setSelectedParts([...selectedParts, {
         ...part,
         quantity: 1,
-        notes: '',
-        troubleshootingComplete: false
+        notes: ''
       }]);
     }
   };
 
-  // Start troubleshooting for a part
   const startTroubleshooting = (part: Part) => {
     setTroubleshootingPart(part);
     setTroubleshootingStep(0);
     setScreen('troubleshooting');
   };
 
-  // Submit order to Firebase
   const submitOrder = async () => {
-    if (!user || !unitData || selectedParts.length === 0) return;
+    if (!user || !modelData || selectedParts.length === 0) return;
 
     try {
       setLoading(true);
 
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
-        unitSerial: unitData.serial,
-        unitModel: unitData.model,
+        unitSerial: scannedSerial,
+        unitModel: modelData.model,
         parts: selectedParts,
         techUid: user.uid,
         techName: user.email || 'Field Tech',
@@ -268,7 +261,6 @@ export default function App() {
         urgent: urgent
       });
 
-      // Clear order
       setSelectedParts([]);
       setUrgent(false);
       setScreen('order-submitted');
@@ -279,22 +271,19 @@ export default function App() {
     }
   };
 
-  // Export order to Excel
   const exportToExcel = (order?: Order) => {
     const partsToExport = order ? order.parts : selectedParts;
-
     if (partsToExport.length === 0) return;
 
     const worksheet = XLSX.utils.json_to_sheet(
       partsToExport.map(part => ({
-        'Part Number': part.number,
+        'Part #': part.number,
         'Part Name': part.name,
         'OEM Part #': part.oemPartNumber,
         'Substitutions': part.substitutions.join(', '),
         'Quantity': part.quantity,
         'OEM Cost': `$${part.oemCost.toFixed(2)}`,
         'Retail Price': `$${part.retailPrice.toFixed(2)}`,
-        'Warranty Eligible': part.warrantyEligible ? 'Yes' : 'No',
         'Category': part.category,
         'Notes': part.notes || ''
       }))
@@ -304,15 +293,14 @@ export default function App() {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Parts Order');
 
     const filename = order
-      ? `Order_${order.unitSerial}_${new Date(order.createdAt.seconds * 1000).toISOString().split('T')[0]}.xlsx`
-      : `Parts_Order_${unitData?.serial || 'draft'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      ? `Order_${order.unitModel}_${new Date(order.createdAt.seconds * 1000).toISOString().split('T')[0]}.xlsx`
+      : `Parts_${modelData?.model || 'draft'}_${new Date().toISOString().split('T')[0]}.xlsx`;
 
     XLSX.writeFile(workbook, filename);
   };
 
-  // --- RENDER SCREENS ---
+  // --- RENDER ---
 
-  // Loading/Error overlay
   if (loading && screen !== 'home') {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -328,12 +316,11 @@ export default function App() {
   if (screen === 'home') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-        {/* Header */}
         <div className="bg-slate-800/50 border-b border-slate-700 p-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-black text-white tracking-tight">UnitIQ</h1>
-              <p className="text-xs text-slate-400 uppercase tracking-wider">Intelligence Platform</p>
+              <p className="text-xs text-slate-400 uppercase tracking-wider">HVAC Intelligence</p>
             </div>
             <button
               onClick={() => setView(view === 'field' ? 'office' : 'field')}
@@ -355,7 +342,7 @@ export default function App() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  placeholder="By Serial or Model Number"
+                  placeholder="Serial or Model Number"
                   className="flex-1 bg-white/20 backdrop-blur text-white placeholder-white/60 px-4 py-3 rounded-xl font-bold focus:outline-none focus:ring-2 focus:ring-white/50"
                 />
               </div>
@@ -373,7 +360,10 @@ export default function App() {
                   <div className="bg-red-100 p-3 rounded-xl">
                     <Scan className="w-8 h-8 text-red-600" />
                   </div>
-                  <span className="text-lg font-bold text-slate-900">By Barcode</span>
+                  <div className="text-left">
+                    <p className="text-lg font-bold text-slate-900">Scan Data Plate</p>
+                    <p className="text-sm text-slate-500">Barcode or serial number</p>
+                  </div>
                 </div>
                 <div className="px-6 py-2 bg-red-600 text-white rounded-full font-bold text-sm group-hover:bg-red-700 transition">
                   Scan
@@ -381,41 +371,20 @@ export default function App() {
               </button>
             </div>
 
-            {/* Additional Options */}
-            <div className="bg-gradient-to-br from-pink-50 to-red-50 rounded-2xl p-6 shadow-lg">
-              <div className="flex items-center gap-4 mb-3">
-                <Users className="w-6 h-6 text-red-700" />
-                <h3 className="font-bold text-slate-900">View Customer System Online</h3>
-              </div>
-              <p className="text-sm text-slate-600">
-                Search by customer name, address, or unit serial to view full system details
-              </p>
-            </div>
-
-            <div className="bg-gradient-to-br from-pink-50 to-red-50 rounded-2xl p-6 shadow-lg">
-              <div className="flex items-center gap-4 mb-3">
-                <Wifi className="w-6 h-6 text-red-700" />
-                <h3 className="font-bold text-slate-900">Connect to Equipment</h3>
-              </div>
-              <p className="text-sm text-slate-600">
-                Use NFC/BLE to connect to equipment for diagnostics and settings
-              </p>
-            </div>
-
             {/* Quick Links */}
             <div className="bg-gradient-to-br from-red-600 to-red-700 rounded-2xl p-6 shadow-2xl">
-              <h3 className="text-white font-bold mb-4">Quick Links</h3>
+              <h3 className="text-white font-bold mb-4">Quick Tools</h3>
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { icon: Calculator, label: 'System Calc' },
+                  { icon: Calculator, label: 'Load Calc' },
                   { icon: Book, label: 'Literature' },
-                  { icon: MapPin, label: 'Store Locator' },
+                  { icon: MapPin, label: 'Suppliers' },
                   { icon: Tag, label: 'Catalog' },
                   { icon: Video, label: 'Tech Tips' },
                   { icon: Briefcase, label: 'My Jobs' },
-                  { icon: AlertTriangle, label: 'Troubleshooting' },
+                  { icon: AlertTriangle, label: 'Diagnostics' },
                   { icon: Send, label: 'Parts Ref' },
-                  { icon: FileText, label: 'Registration' }
+                  { icon: FileText, label: 'Notes' }
                 ].map((item, i) => (
                   <button
                     key={i}
@@ -512,7 +481,7 @@ export default function App() {
   }
 
   // PRODUCT DETAILS SCREEN
-  if (screen === 'product-details' && unitData) {
+  if (screen === 'product-details' && modelData) {
     return (
       <div className="min-h-screen bg-slate-50">
         <div className="bg-slate-900 text-white p-4">
@@ -521,48 +490,53 @@ export default function App() {
               <ArrowLeft className="w-6 h-6" />
             </button>
             <div className="text-center flex-1">
-              <p className="font-bold text-lg">{unitData.model}</p>
-              <p className="text-sm text-red-400">{unitData.serial}</p>
+              <p className="font-bold text-lg">{modelData.model}</p>
+              <p className="text-sm text-red-400">{scannedSerial}</p>
             </div>
             <div className="w-10"></div>
           </div>
         </div>
 
-        <div className="p-4 space-y-3">
-          <MenuItem
-            icon={Shield}
-            title="Entitlement Overview"
-            onClick={() => setScreen('entitlement')}
-          />
+        <div className="p-4 space-y-3 pb-24">
+          <div className="bg-white rounded-lg p-4 shadow mb-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">{modelData.brand}</p>
+            <p className="text-lg font-bold text-slate-900">{modelData.productName}</p>
+          </div>
+
           <MenuItem
             icon={Image}
-            title="Drawing"
+            title="Exploded Diagram"
             onClick={() => setScreen('drawing')}
           />
           <MenuItem
             icon={Wrench}
-            title="View Parts"
+            title="Parts List"
+            subtitle={`${modelData.parts.length} parts`}
+            onClick={() => setScreen('parts-list')}
+          />
+          <MenuItem
+            icon={AlertTriangle}
+            title="Troubleshooting"
+            subtitle="Diagnostic flowcharts"
             onClick={() => setScreen('parts-list')}
           />
           <MenuItem
             icon={Book}
-            title="Installation Literature"
-            onClick={() => window.open(unitData.literatureUrls.installation, '_blank')}
+            title="Installation Manual"
+            onClick={() => window.open(modelData.literatureUrls.installation, '_blank')}
+            external
           />
           <MenuItem
             icon={FileText}
-            title="Diagnostic Literature"
-            onClick={() => window.open(unitData.literatureUrls.diagnostic, '_blank')}
+            title="Service Manual"
+            onClick={() => window.open(modelData.literatureUrls.diagnostic, '_blank')}
+            external
           />
           <MenuItem
             icon={Package}
-            title="Warranty Information"
-            onClick={() => window.open(unitData.literatureUrls.warranty, '_blank')}
-          />
-          <MenuItem
-            icon={Calendar}
-            title="Service History"
-            onClick={() => setScreen('service-history')}
+            title="Product Data"
+            onClick={() => window.open(modelData.literatureUrls.productData, '_blank')}
+            external
           />
         </div>
 
@@ -589,57 +563,34 @@ export default function App() {
     );
   }
 
-  // ENTITLEMENT/WARRANTY SCREEN
-  if (screen === 'entitlement' && unitData) {
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <Header title="Entitlement Overview" onBack={() => setScreen('product-details')} />
-        <div className="p-6 space-y-4">
-          <InfoRow label="Owner" value={unitData.owner} />
-          <InfoRow label="Date Installed" value={unitData.installDate} />
-          <InfoRow label="Date Transferred" value={unitData.dateTransferred} />
-          <InfoRow label="Policy Description" value={unitData.warrantyPolicy} />
-          <InfoRow label="Shipped Date" value={unitData.shippedDate} />
-          <InfoRow
-            label="Warranty Status"
-            value={unitData.warrantyStatus}
-            highlight={unitData.warrantyStatus === 'Active'}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // DRAWING/DIAGRAM SCREEN
-  if (screen === 'drawing' && unitData) {
+  // DRAWING SCREEN
+  if (screen === 'drawing' && modelData) {
     return (
       <div className="min-h-screen bg-white">
-        <Header title="Drawing" onBack={() => setScreen('product-details')} />
+        <Header title="Exploded Diagram" onBack={() => setScreen('product-details')} />
         <div className="p-4">
-          <h2 className="font-bold text-xl mb-4">{unitData.productName}</h2>
-          <div className="bg-slate-100 rounded-lg p-4 mb-4">
-            <p className="text-sm text-slate-600 mb-1"><strong>Model #</strong> {unitData.model}</p>
-            <p className="text-sm text-slate-600"><strong>Serial #</strong> {unitData.serial}</p>
-          </div>
+          <h2 className="font-bold text-xl mb-2">{modelData.productName}</h2>
+          <p className="text-sm text-slate-600 mb-4">Model: {modelData.model}</p>
 
-          {/* Exploded Diagram */}
-          <div className="relative border border-slate-300 rounded-lg overflow-hidden">
+          <div className="relative border border-slate-300 rounded-lg overflow-hidden bg-white">
             <img
-              src={unitData.diagramUrl}
+              src={modelData.diagramUrl}
               alt="Unit Diagram"
               className="w-full"
             />
-            {/* Interactive hotspots for parts */}
-            {unitData.parts
+            {modelData.parts
               .filter(p => p.diagramPosition)
               .map(part => (
                 <button
                   key={part.id}
                   onClick={() => {
                     addPartToOrder(part);
-                    startTroubleshooting(part);
+                    const hasTroubleshooting = modelData.troubleshooting[part.id];
+                    if (hasTroubleshooting) {
+                      startTroubleshooting(part);
+                    }
                   }}
-                  className="absolute w-8 h-8 bg-red-600 text-white rounded-full font-bold text-xs flex items-center justify-center hover:scale-125 transition shadow-lg"
+                  className="absolute w-10 h-10 bg-red-600 text-white rounded-full font-bold text-sm flex items-center justify-center hover:scale-125 transition shadow-lg border-2 border-white"
                   style={{
                     top: part.diagramPosition!.top,
                     left: part.diagramPosition!.left
@@ -649,53 +600,66 @@ export default function App() {
                 </button>
               ))}
           </div>
+
+          <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <p className="text-sm text-blue-900">
+              <strong>Tip:</strong> Tap numbered circles to add parts and view troubleshooting guides
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
   // PARTS LIST SCREEN
-  if (screen === 'parts-list' && unitData) {
+  if (screen === 'parts-list' && modelData) {
     return (
       <div className="min-h-screen bg-slate-50">
         <Header title="Parts List" onBack={() => setScreen('product-details')} />
         <div className="p-4 space-y-3 pb-32">
-          {unitData.parts.map(part => (
+          {modelData.parts.map(part => (
             <div key={part.id} className="bg-white rounded-lg p-4 shadow">
-              <div className="flex items-start justify-between mb-2">
+              <div className="flex items-start justify-between mb-3">
                 <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="bg-slate-900 text-white text-xs font-bold px-2 py-1 rounded">
+                      #{part.number}
+                    </span>
+                    <span className="text-xs text-slate-500">{part.category}</span>
+                  </div>
                   <p className="font-bold text-slate-900">{part.name}</p>
-                  <p className="text-sm text-slate-600">Part # {part.number}</p>
-                  <p className="text-xs text-slate-500">OEM: {part.oemPartNumber}</p>
+                  <p className="text-sm text-blue-600 font-mono mt-1">{part.oemPartNumber}</p>
                   {part.substitutions.length > 0 && (
-                    <p className="text-xs text-blue-600 mt-1">
-                      Alt: {part.substitutions.join(', ')}
-                    </p>
+                    <div className="mt-2 bg-slate-50 rounded p-2">
+                      <p className="text-xs text-slate-600 font-bold mb-1">Substitutions:</p>
+                      <p className="text-xs text-slate-700 font-mono">
+                        {part.substitutions.join(', ')}
+                      </p>
+                    </div>
                   )}
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-slate-900">${part.retailPrice.toFixed(2)}</p>
-                  <p className="text-xs text-slate-500">OEM: ${part.oemCost.toFixed(2)}</p>
-                  {part.warrantyEligible && (
-                    <span className="inline-block mt-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded">
-                      WARRANTY
-                    </span>
-                  )}
+                <div className="text-right ml-4">
+                  <p className="font-bold text-lg text-slate-900">${part.retailPrice.toFixed(2)}</p>
+                  <p className="text-xs text-slate-500">Cost: ${part.oemCost.toFixed(2)}</p>
                 </div>
               </div>
 
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => startTroubleshooting(part)}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-bold"
-                >
-                  Troubleshoot
-                </button>
+              <div className="flex gap-2">
+                {modelData.troubleshooting[part.id] && (
+                  <button
+                    onClick={() => startTroubleshooting(part)}
+                    className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1"
+                  >
+                    <AlertTriangle className="w-4 h-4" />
+                    Diagnose
+                  </button>
+                )}
                 <button
                   onClick={() => addPartToOrder(part)}
-                  className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-bold"
+                  className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1"
                 >
-                  Add to Order
+                  <Package className="w-4 h-4" />
+                  Add
                 </button>
               </div>
             </div>
@@ -738,15 +702,16 @@ export default function App() {
   }
 
   // TROUBLESHOOTING SCREEN
-  if (screen === 'troubleshooting' && troubleshootingPart && unitData) {
-    const steps = unitData.troubleshooting[troubleshootingPart.id] || [];
+  if (screen === 'troubleshooting' && troubleshootingPart && modelData) {
+    const steps = modelData.troubleshooting[troubleshootingPart.id] || [];
     const currentStep = steps[troubleshootingStep];
 
     if (!currentStep) {
       return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-          <div className="text-center p-6">
-            <p className="text-slate-600 mb-4">No troubleshooting data available for this part</p>
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+          <div className="text-center">
+            <AlertTriangle className="w-16 h-16 text-slate-400 mx-auto mb-4" />
+            <p className="text-slate-600 mb-4">No troubleshooting guide available for this part</p>
             <button
               onClick={() => setScreen('parts-list')}
               className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold"
@@ -763,10 +728,6 @@ export default function App() {
       if (nextStep !== undefined) {
         setTroubleshootingStep(nextStep);
       } else {
-        // Mark as complete
-        setSelectedParts(selectedParts.map(p =>
-          p.id === troubleshootingPart.id ? { ...p, troubleshootingComplete: true } : p
-        ));
         setScreen('parts-list');
       }
     };
@@ -774,39 +735,45 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50">
         <Header
-          title={`Troubleshooting: ${troubleshootingPart.name}`}
-          onBack={() => setScreen('parts-list')}
+          title={`Diagnosing: ${troubleshootingPart.name}`}
+          onBack={() => {
+            setTroubleshootingStep(0);
+            setScreen('parts-list');
+          }}
         />
         <div className="p-6">
           <div className="bg-white rounded-xl p-6 shadow-lg mb-6">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="bg-blue-100 p-3 rounded-full">
-                <AlertTriangle className="w-8 h-8 text-blue-600" />
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-bold text-blue-600">
+                  STEP {troubleshootingStep + 1} of {steps.length}
+                </span>
+                <span className="text-xs text-slate-500">Part #{troubleshootingPart.number}</span>
               </div>
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Step {troubleshootingStep + 1} of {steps.length}</p>
-                <p className="text-lg font-bold text-slate-900">{currentStep.question}</p>
-              </div>
+              <p className="text-xl font-bold text-slate-900">{currentStep.question}</p>
             </div>
 
-            {currentStep.action ? (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-                <p className="font-bold text-green-900 mb-2">Recommendation:</p>
+            {currentStep.action && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-600 rounded-r-lg p-4 mb-6">
+                <p className="font-bold text-green-900 mb-2 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5" />
+                  Recommendation
+                </p>
                 <p className="text-green-800">{currentStep.action}</p>
               </div>
-            ) : null}
+            )}
 
-            <div className="flex gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => handleAnswer('yes')}
-                className="flex-1 bg-green-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2"
+                className="bg-green-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-green-700 transition"
               >
                 <CheckCircle2 className="w-6 h-6" />
                 Yes
               </button>
               <button
                 onClick={() => handleAnswer('no')}
-                className="flex-1 bg-red-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2"
+                className="bg-red-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 hover:bg-red-700 transition"
               >
                 <XCircle className="w-6 h-6" />
                 No
@@ -819,44 +786,10 @@ export default function App() {
               setTroubleshootingStep(0);
               setScreen('parts-list');
             }}
-            className="w-full text-slate-600 font-bold text-sm"
+            className="w-full text-slate-600 font-bold text-sm hover:text-slate-900"
           >
             Cancel Troubleshooting
           </button>
-        </div>
-      </div>
-    );
-  }
-
-  // SERVICE HISTORY SCREEN
-  if (screen === 'service-history' && unitData) {
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <Header title="Service History" onBack={() => setScreen('product-details')} />
-        <div className="p-4 space-y-3">
-          {unitData.serviceHistory.length === 0 ? (
-            <div className="bg-white rounded-lg p-8 text-center">
-              <p className="text-slate-500">No service history available</p>
-            </div>
-          ) : (
-            unitData.serviceHistory.map((record, i) => (
-              <div key={i} className="bg-white rounded-lg p-4 shadow">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <p className="font-bold text-slate-900">{record.partReplaced}</p>
-                    <p className="text-sm text-slate-600">{record.tech}</p>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                    record.type === 'Warranty' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {record.type}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">{record.date}</p>
-                <p className="text-xs text-slate-500">Status: {record.status}</p>
-              </div>
-            ))
-          )}
         </div>
       </div>
     );
@@ -875,7 +808,8 @@ export default function App() {
           <button
             onClick={() => {
               setScreen('home');
-              setUnitData(null);
+              setModelData(null);
+              setScannedSerial('');
             }}
             className="bg-blue-600 text-white px-8 py-3 rounded-lg font-bold"
           >
@@ -890,39 +824,43 @@ export default function App() {
 }
 
 // Helper Components
-function MenuItem({ icon: Icon, title, onClick }: { icon: any; title: string; onClick: () => void }) {
+function MenuItem({ icon: Icon, title, subtitle, onClick, external }: {
+  icon: any;
+  title: string;
+  subtitle?: string;
+  onClick: () => void;
+  external?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
-      className="w-full bg-white rounded-lg p-4 shadow flex items-center justify-between group hover:bg-slate-50"
+      className="w-full bg-white rounded-lg p-4 shadow flex items-center justify-between group hover:bg-slate-50 transition"
     >
       <div className="flex items-center gap-3">
         <div className="bg-red-100 p-2 rounded-lg">
           <Icon className="w-6 h-6 text-red-600" />
         </div>
-        <span className="font-bold text-slate-900">{title}</span>
+        <div className="text-left">
+          <p className="font-bold text-slate-900">{title}</p>
+          {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
+        </div>
       </div>
-      <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600" />
+      {external ? (
+        <ExternalLink className="w-5 h-5 text-slate-400 group-hover:text-slate-600" />
+      ) : (
+        <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600" />
+      )}
     </button>
   );
 }
 
 function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
-    <div className="bg-slate-900 text-white p-4 flex items-center gap-4 sticky top-0 z-10">
-      <button onClick={onBack} className="p-2">
+    <div className="bg-slate-900 text-white p-4 flex items-center gap-4 sticky top-0 z-10 shadow-lg">
+      <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-lg transition">
         <ArrowLeft className="w-6 h-6" />
       </button>
       <h1 className="font-bold text-lg">{title}</h1>
-    </div>
-  );
-}
-
-function InfoRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div className="border-b border-slate-200 pb-3">
-      <p className="text-sm font-bold text-slate-600 mb-1">{label}:</p>
-      <p className={`${highlight ? 'text-green-600 font-bold' : 'text-slate-900'}`}>{value}</p>
     </div>
   );
 }

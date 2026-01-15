@@ -5,586 +5,924 @@ import {
   collection,
   addDoc,
   onSnapshot,
+  doc,
+  getDoc,
   serverTimestamp
 } from 'firebase/firestore';
 import {
   getAuth,
   signInAnonymously,
   onAuthStateChanged,
-  signInWithCustomToken,
   User
 } from 'firebase/auth';
+import { Html5Qrcode } from 'html5-qrcode';
+import * as XLSX from 'xlsx';
 import {
-  Scan, History,
-  ShieldCheck, ChevronRight, ArrowLeft,
-  Send, CheckCircle2,
-  Zap, Box, Wind, Info, Wrench, Crosshair,
-  RefreshCw, FileSearch, BookOpen, Clock, BadgeCheck, Package
+  Scan, Search, Users, Wifi, ArrowLeft, ChevronRight,
+  Calculator, Book, MapPin, Tag, Video, Briefcase,
+  AlertTriangle, Send, Package, Download, FileText,
+  Shield, Calendar, Wrench, Image, CheckCircle2, XCircle, X
 } from 'lucide-react';
 
 // --- TYPES ---
-interface CoverageItem {
-  item: string;
-  covered: boolean;
-  type: string;
-  oemCost: number;
-}
-
-interface ClaimHistory {
-  date: string;
-  part: string;
-  type: string;
-  tech: string;
-  status: string;
-}
-
-interface Manual {
-  title: string;
-  size: string;
-}
-
-interface DiagramPoint {
-  id: number;
+interface Part {
+  id: string;
+  number: string; // Part number on diagram
   name: string;
-  top: string;
-  left: string;
+  oemPartNumber: string;
+  substitutions: string[]; // Alternative part numbers
+  oemCost: number;
+  retailPrice: number;
+  category: string; // 'compressor', 'motor', 'coil', etc.
+  warrantyEligible: boolean;
+  diagramPosition?: { top: string; left: string }; // Position on exploded diagram
+}
+
+interface TroubleshootingStep {
+  id: number;
+  question: string;
+  yesNext?: number;
+  noNext?: number;
+  action?: string; // Final recommendation
 }
 
 interface UnitData {
-  brand: string;
-  model: string;
   serial: string;
+  model: string;
+  brand: string;
+  productName: string;
   installDate: string;
-  warranty: {
-    compressor: string;
-    parts: string;
-    labor: string;
-    status: string;
+  shippedDate: string;
+  owner: string; // Masked for privacy
+  dateTransferred: string;
+  warrantyPolicy: string;
+  warrantyStatus: 'Active' | 'Expired' | 'Limited';
+  parts: Part[];
+  diagramUrl: string; // URL to exploded diagram image
+  troubleshooting: { [partId: string]: TroubleshootingStep[] };
+  literatureUrls: {
+    installation?: string;
+    diagnostic?: string;
+    warranty?: string;
+    productData?: string;
+    all?: string;
   };
-  coverage: CoverageItem[];
-  claimsHistory: ClaimHistory[];
-  manuals: Manual[];
-  diagram: DiagramPoint[];
+  serviceHistory: ServiceRecord[];
 }
 
-interface Ticket {
-  id: string;
-  partName: string;
-  partType: string;
-  retailPrice: number;
-  isWarranty: boolean;
-  unitModel: string;
-  unitSerial: string;
-  isUrgent: boolean;
+interface ServiceRecord {
+  date: string;
+  tech: string;
+  partReplaced: string;
+  type: 'Warranty' | 'Service Call';
   status: string;
-  techUid: string;
-  createdAt?: { seconds: number };
 }
 
-// --- GLOBALS & CONFIG ---
+interface SelectedPart extends Part {
+  quantity: number;
+  notes: string;
+  troubleshootingComplete: boolean;
+}
+
+interface Order {
+  id: string;
+  unitSerial: string;
+  unitModel: string;
+  parts: SelectedPart[];
+  techUid: string;
+  techName: string;
+  createdAt: { seconds: number };
+  status: 'pending' | 'approved' | 'ordered';
+  urgent: boolean;
+}
+
+// --- FIREBASE CONFIG ---
 const firebaseConfig = typeof __firebase_config !== 'undefined'
   ? JSON.parse(__firebase_config)
   : { apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: "" };
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'unitiq-enterprise-v1';
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- ENTERPRISE UNIT KNOWLEDGE BASE ---
-const UNIT_DB: Record<string, UnitData> = {
-  '4TTR6036C1000A': {
-    brand: 'Trane',
-    model: '4TTR6036C1000A',
-    serial: '184234567L',
-    installDate: '2021-06-15',
-    warranty: {
-      compressor: '10 Years (Active)',
-      parts: '5 Years (Active)',
-      labor: 'Expired',
-      status: 'In-Warranty'
-    },
-    coverage: [
-      { item: 'Compressor', covered: true, type: 'Core', oemCost: 850 },
-      { item: 'Condenser Coil', covered: true, type: 'Core', oemCost: 420 },
-      { item: 'Blower Motor', covered: true, type: 'Part', oemCost: 245 },
-      { item: 'Refrigerant', covered: false, type: 'Consumable', oemCost: 180 },
-      { item: 'Dual Capacitor', covered: false, type: 'Consumable', oemCost: 45 },
-      { item: 'Filter Drier', covered: false, type: 'Consumable', oemCost: 35 }
-    ],
-    claimsHistory: [
-      { date: '2023-08-12', part: 'Contactor', type: 'Warranty Claim', tech: 'Lead Tech B.', status: 'Paid' },
-      { date: '2022-01-05', part: 'Start Assist Kit', type: 'Service Call', tech: 'Tech J.', status: 'Closed' }
-    ],
-    manuals: [
-      { title: 'Installation Guide', size: '4.2 MB' },
-      { title: 'Service & Diagnostic Manual', size: '12.8 MB' },
-      { title: 'Product Data Sheet', size: '1.1 MB' }
-    ],
-    diagram: [
-      { id: 1, name: 'Fan Assembly', top: '22%', left: '52%' },
-      { id: 2, name: 'Scroll Comp', top: '72%', left: '35%' },
-      { id: 3, name: 'Control Board', top: '45%', left: '78%' }
-    ]
-  }
-};
-
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState('Field');
-  const [screen, setScreen] = useState('Home');
-  const [activeTab, setActiveTab] = useState('General');
-  const [isUrgent, setIsUrgent] = useState(false);
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [view, setView] = useState<'field' | 'office'>('field');
+  const [screen, setScreen] = useState('home');
+  const [unitData, setUnitData] = useState<UnitData | null>(null);
+  const [selectedParts, setSelectedParts] = useState<SelectedPart[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [troubleshootingPart, setTroubleshootingPart] = useState<Part | null>(null);
+  const [troubleshootingStep, setTroubleshootingStep] = useState(0);
+  const [urgent, setUrgent] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [scannedUnit, setScannedUnit] = useState<UnitData | null>(null);
+  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
 
-  // Auth Handling
+  // Auth
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (e) {
-        console.error("Auth init failed:", e);
+        console.error("Auth failed:", e);
       }
     };
-
     initAuth();
     const unsub = onAuthStateChanged(auth, setUser);
     return () => unsub();
   }, []);
 
-  // Real-time Data Sync
+  // Real-time Orders Sync
   useEffect(() => {
     if (!user) return;
 
     const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
-
-    // Using a simple query as per Rule 2
-    const unsubscribe = onSnapshot(
-      ordersCol,
-      (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Ticket));
-        // Sort in memory to avoid index requirements
-        setTickets(
-          data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
-        );
-      },
-      (err) => console.error("Firestore Error:", err)
-    );
+    const unsubscribe = onSnapshot(ordersCol, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Order));
+      setOrders(data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+    });
 
     return () => unsubscribe();
   }, [user]);
 
-  const handleOrder = async (item: CoverageItem) => {
-    if (!user || !scannedUnit) return;
-
-    const retailPrice = item.oemCost * (item.oemCost <= 250 ? 10 : 7.5);
-
+  // Scan barcode using device camera
+  const handleScan = async () => {
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
-        partName: item.item,
-        partType: item.type,
-        retailPrice: item.covered ? 0 : retailPrice,
-        isWarranty: item.covered,
-        unitModel: scannedUnit.model,
-        unitSerial: scannedUnit.serial,
-        isUrgent,
-        status: 'Pending',
-        techUid: user.uid,
-        createdAt: serverTimestamp()
-      });
-      setScreen('Success');
-    } catch (err) {
-      console.error("Order failed:", err);
+      setScanning(true);
+      setError('');
+
+      const qrCodeScanner = new Html5Qrcode("reader");
+      setHtml5QrCode(qrCodeScanner);
+
+      await qrCodeScanner.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 }
+        },
+        (decodedText) => {
+          // Success callback
+          qrCodeScanner.stop();
+          setScanning(false);
+          lookupUnit(decodedText);
+        },
+        (errorMessage) => {
+          // Error callback - just log, don't show to user
+          console.log("Scan error:", errorMessage);
+        }
+      );
+    } catch (err: any) {
+      setError(err.message || 'Camera access denied');
+      setScanning(false);
     }
   };
 
-  if (!user) return (
-    <div className="h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-10 text-center">
-      <RefreshCw className="animate-spin mb-6 text-blue-500" size={48} />
-      <h1 className="text-2xl font-black uppercase tracking-[0.2em]">UnitIQ Intelligence</h1>
-      <p className="text-slate-500 text-sm mt-4 font-medium">Securing Enterprise Connection...</p>
-    </div>
-  );
+  // Stop scanning
+  const stopScan = async () => {
+    if (html5QrCode) {
+      try {
+        await html5QrCode.stop();
+      } catch (e) {
+        console.error("Error stopping scanner:", e);
+      }
+    }
+    setScanning(false);
+  };
 
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-32 font-sans selection:bg-blue-100">
-      {/* GLOBAL HEADER */}
-      <header className="sticky top-0 z-[100] bg-white/80 backdrop-blur-xl border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-200">
-            <Wind size={22} strokeWidth={3} />
-          </div>
-          <div>
-            <span className="text-xl font-black tracking-tighter block leading-none">UNITIQ</span>
-            <span className="text-[9px] font-black text-blue-600 uppercase tracking-[0.2em]">Enterprise</span>
+
+  // Look up unit by serial or model number
+  const lookupUnit = async (query: string) => {
+    try {
+      setLoading(true);
+      setError('');
+
+      // Query Firebase for unit data
+      const unitDoc = doc(db, 'artifacts', appId, 'public', 'data', 'units', query.trim().toUpperCase());
+      const unitSnap = await getDoc(unitDoc);
+
+      if (unitSnap.exists()) {
+        setUnitData(unitSnap.data() as UnitData);
+        setScreen('product-details');
+      } else {
+        setError(`Unit ${query} not found in database. Please check the serial/model number.`);
+      }
+
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message || 'Lookup failed');
+      setLoading(false);
+    }
+  };
+
+  // Handle search
+  const handleSearch = () => {
+    if (searchQuery.trim()) {
+      lookupUnit(searchQuery);
+    }
+  };
+
+  // Add part to order
+  const addPartToOrder = (part: Part) => {
+    const existing = selectedParts.find(p => p.id === part.id);
+    if (existing) {
+      setSelectedParts(selectedParts.map(p =>
+        p.id === part.id ? { ...p, quantity: p.quantity + 1 } : p
+      ));
+    } else {
+      setSelectedParts([...selectedParts, {
+        ...part,
+        quantity: 1,
+        notes: '',
+        troubleshootingComplete: false
+      }]);
+    }
+  };
+
+  // Start troubleshooting for a part
+  const startTroubleshooting = (part: Part) => {
+    setTroubleshootingPart(part);
+    setTroubleshootingStep(0);
+    setScreen('troubleshooting');
+  };
+
+  // Submit order to Firebase
+  const submitOrder = async () => {
+    if (!user || !unitData || selectedParts.length === 0) return;
+
+    try {
+      setLoading(true);
+
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
+        unitSerial: unitData.serial,
+        unitModel: unitData.model,
+        parts: selectedParts,
+        techUid: user.uid,
+        techName: user.email || 'Field Tech',
+        createdAt: serverTimestamp(),
+        status: 'pending',
+        urgent: urgent
+      });
+
+      // Clear order
+      setSelectedParts([]);
+      setUrgent(false);
+      setScreen('order-submitted');
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message || 'Order submission failed');
+      setLoading(false);
+    }
+  };
+
+  // Export order to Excel
+  const exportToExcel = (order?: Order) => {
+    const partsToExport = order ? order.parts : selectedParts;
+
+    if (partsToExport.length === 0) return;
+
+    const worksheet = XLSX.utils.json_to_sheet(
+      partsToExport.map(part => ({
+        'Part Number': part.number,
+        'Part Name': part.name,
+        'OEM Part #': part.oemPartNumber,
+        'Substitutions': part.substitutions.join(', '),
+        'Quantity': part.quantity,
+        'OEM Cost': `$${part.oemCost.toFixed(2)}`,
+        'Retail Price': `$${part.retailPrice.toFixed(2)}`,
+        'Warranty Eligible': part.warrantyEligible ? 'Yes' : 'No',
+        'Category': part.category,
+        'Notes': part.notes || ''
+      }))
+    );
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Parts Order');
+
+    const filename = order
+      ? `Order_${order.unitSerial}_${new Date(order.createdAt.seconds * 1000).toISOString().split('T')[0]}.xlsx`
+      : `Parts_Order_${unitData?.serial || 'draft'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+    XLSX.writeFile(workbook, filename);
+  };
+
+  // --- RENDER SCREENS ---
+
+  // Loading/Error overlay
+  if (loading && screen !== 'home') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-white font-bold">LOADING...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // HOME SCREEN
+  if (screen === 'home') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        {/* Header */}
+        <div className="bg-slate-800/50 border-b border-slate-700 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-black text-white tracking-tight">UnitIQ</h1>
+              <p className="text-xs text-slate-400 uppercase tracking-wider">Intelligence Platform</p>
+            </div>
+            <button
+              onClick={() => setView(view === 'field' ? 'office' : 'field')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold"
+            >
+              {view === 'field' ? 'Office View' : 'Field View'}
+            </button>
           </div>
         </div>
-        <button
-          onClick={() => setView(view === 'Field' ? 'Office' : 'Field')}
-          className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg active:scale-95"
-        >
-          {view === 'Field' ? 'Office View' : 'Field Mode'}
-        </button>
-      </header>
 
-      <main className="max-w-md mx-auto p-5 pt-8">
-        {view === 'Office' ? (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex justify-between items-end mb-8">
-              <h2 className="text-3xl font-black tracking-tight">Active Fleet</h2>
-              <div className="text-right">
-                <div className="text-2xl font-black text-blue-600 leading-none">{tickets.length}</div>
-                <div className="text-[10px] font-black text-slate-400 uppercase">Requests</div>
+        {view === 'field' ? (
+          <div className="p-6 space-y-6">
+            {/* Search */}
+            <div className="bg-gradient-to-r from-red-600 to-red-700 rounded-2xl p-6 shadow-2xl">
+              <div className="flex items-center gap-3 mb-3">
+                <Search className="w-6 h-6 text-white" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="By Serial or Model Number"
+                  className="flex-1 bg-white/20 backdrop-blur text-white placeholder-white/60 px-4 py-3 rounded-xl font-bold focus:outline-none focus:ring-2 focus:ring-white/50"
+                />
               </div>
+              {error && <p className="text-white/90 text-sm mt-2">{error}</p>}
             </div>
 
-            <div className="space-y-4">
-              {tickets.length === 0 && (
-                <div className="bg-white p-12 rounded-[3rem] text-center border-2 border-dashed border-slate-200">
-                  <Package size={48} className="mx-auto text-slate-200 mb-4" />
-                  <p className="text-slate-400 font-bold">No pending parts or claims.</p>
-                </div>
-              )}
-              {tickets.map(t => (
-                <div key={t.id} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden group">
-                  {t.isUrgent && <div className="absolute top-0 right-0 bg-red-600 text-white px-4 py-1 rounded-bl-2xl text-[8px] font-black uppercase tracking-widest">Emergency</div>}
-                  <div className="flex justify-between items-start mb-4">
-                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${t.isWarranty ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
-                      {t.isWarranty ? 'Warranty Claim' : 'Billable Part'}
-                    </span>
-                    <span className="text-slate-400 font-bold text-[10px]">SN: {t.unitSerial}</span>
+            {/* Barcode Scanner */}
+            <div className="bg-white rounded-2xl p-6 shadow-lg">
+              <button
+                onClick={handleScan}
+                disabled={loading}
+                className="w-full flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="bg-red-100 p-3 rounded-xl">
+                    <Scan className="w-8 h-8 text-red-600" />
                   </div>
-                  <h3 className="text-xl font-black text-slate-800 mb-2">{t.partName}</h3>
-                  <div className="flex justify-between items-center mt-6">
-                    <div className="text-2xl font-black">${t.retailPrice?.toLocaleString() ?? '0'}</div>
-                    <button className="bg-slate-950 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 transition-colors">Approve</button>
-                  </div>
+                  <span className="text-lg font-bold text-slate-900">By Barcode</span>
                 </div>
-              ))}
+                <div className="px-6 py-2 bg-red-600 text-white rounded-full font-bold text-sm group-hover:bg-red-700 transition">
+                  Scan
+                </div>
+              </button>
+            </div>
+
+            {/* Additional Options */}
+            <div className="bg-gradient-to-br from-pink-50 to-red-50 rounded-2xl p-6 shadow-lg">
+              <div className="flex items-center gap-4 mb-3">
+                <Users className="w-6 h-6 text-red-700" />
+                <h3 className="font-bold text-slate-900">View Customer System Online</h3>
+              </div>
+              <p className="text-sm text-slate-600">
+                Search by customer name, address, or unit serial to view full system details
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-pink-50 to-red-50 rounded-2xl p-6 shadow-lg">
+              <div className="flex items-center gap-4 mb-3">
+                <Wifi className="w-6 h-6 text-red-700" />
+                <h3 className="font-bold text-slate-900">Connect to Equipment</h3>
+              </div>
+              <p className="text-sm text-slate-600">
+                Use NFC/BLE to connect to equipment for diagnostics and settings
+              </p>
+            </div>
+
+            {/* Quick Links */}
+            <div className="bg-gradient-to-br from-red-600 to-red-700 rounded-2xl p-6 shadow-2xl">
+              <h3 className="text-white font-bold mb-4">Quick Links</h3>
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { icon: Calculator, label: 'System Calc' },
+                  { icon: Book, label: 'Literature' },
+                  { icon: MapPin, label: 'Store Locator' },
+                  { icon: Tag, label: 'Catalog' },
+                  { icon: Video, label: 'Tech Tips' },
+                  { icon: Briefcase, label: 'My Jobs' },
+                  { icon: AlertTriangle, label: 'Troubleshooting' },
+                  { icon: Send, label: 'Parts Ref' },
+                  { icon: FileText, label: 'Registration' }
+                ].map((item, i) => (
+                  <button
+                    key={i}
+                    className="bg-white rounded-xl p-4 flex flex-col items-center gap-2 hover:scale-105 transition"
+                  >
+                    <item.icon className="w-6 h-6 text-red-600" />
+                    <span className="text-xs font-bold text-slate-900 text-center">{item.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
-          /* FIELD TECH EXPERIENCE */
-          <>
-            {screen === 'Home' && (
-              <div className="space-y-6 animate-in fade-in duration-700">
-                <div className={`p-10 rounded-[3.5rem] shadow-2xl transition-all duration-700 relative overflow-hidden ${isUrgent ? 'bg-red-600 shadow-red-200' : 'bg-blue-700 shadow-blue-200'}`}>
-                  <div className="relative z-10">
-                    <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full text-white/60 text-[10px] font-black uppercase tracking-[0.2em] mb-4">
-                      <Zap size={12} /> Tech Assist Active
-                    </div>
-                    <h2 className="text-white text-4xl font-black tracking-tighter mb-2 leading-none">UnitIQ Core</h2>
-                    <p className="text-white/70 text-sm mb-10 leading-relaxed font-medium pr-10">Scan data plates to unlock lifecycle data and parts availability.</p>
-
-                    <div className="bg-white/10 backdrop-blur-md p-6 rounded-[2rem] flex items-center justify-between mb-10 border border-white/10">
+          // OFFICE VIEW
+          <div className="p-6">
+            <h2 className="text-2xl font-bold text-white mb-6">Field Orders</h2>
+            {orders.length === 0 ? (
+              <div className="bg-slate-800 rounded-xl p-8 text-center">
+                <Package className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+                <p className="text-slate-400">No orders yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {orders.map(order => (
+                  <div key={order.id} className="bg-slate-800 rounded-xl p-6">
+                    <div className="flex items-start justify-between mb-4">
                       <div>
-                        <div className="text-[10px] font-black uppercase text-white/50 mb-1">Service Level</div>
-                        <div className="text-white font-black text-lg">{isUrgent ? 'System Down' : 'Standard Call'}</div>
+                        <p className="text-white font-bold text-lg">{order.unitModel}</p>
+                        <p className="text-slate-400 text-sm">Serial: {order.unitSerial}</p>
+                        <p className="text-slate-400 text-sm">Tech: {order.techName}</p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          {new Date(order.createdAt.seconds * 1000).toLocaleString()}
+                        </p>
                       </div>
-                      <button onClick={() => setIsUrgent(!isUrgent)} className="w-16 h-8 bg-black/20 rounded-full p-1.5 relative transition-colors shadow-inner">
-                        <div className={`w-5 h-5 rounded-full transition-all shadow-lg ${isUrgent ? 'translate-x-8 bg-white' : 'bg-white/40'}`} />
-                      </button>
-                    </div>
-
-                    <button onClick={() => setScreen('Scanner')} className="w-full bg-white py-6 rounded-3xl font-black text-xl flex items-center justify-center gap-4 shadow-2xl active:scale-[0.97] transition-all text-slate-900 hover:bg-slate-50">
-                      <Scan size={26} className="text-blue-600" /> Start Scan
-                    </button>
-                  </div>
-                  <Wind className="absolute -right-16 -bottom-16 w-64 h-64 text-white/5 rotate-45" />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <button onClick={() => setScreen('Log')} className="bg-white p-7 rounded-[3rem] border border-slate-200 shadow-sm text-left active:scale-95 transition-all group">
-                    <Clock className="text-blue-600 mb-4 group-hover:scale-110 transition-transform" size={32} />
-                    <div className="font-black text-xl">History</div>
-                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Local Jobs</div>
-                  </button>
-                  <button className="bg-white p-7 rounded-[3rem] border border-slate-200 shadow-sm text-left opacity-30 grayscale cursor-not-allowed">
-                    <BookOpen className="text-slate-400 mb-4" size={32} />
-                    <div className="font-black text-xl">Training</div>
-                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Knowledge</div>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {screen === 'Scanner' && (
-              <div className="animate-in slide-in-from-bottom-12 duration-500 h-[70vh]">
-                <div className="relative h-full bg-slate-950 rounded-[4rem] overflow-hidden flex flex-col items-center justify-center shadow-3xl">
-                  <div className="absolute inset-12 border-2 border-white/10 rounded-[2.5rem] flex flex-col items-center justify-center p-10 text-center">
-                    {scanning ? (
-                      <div className="animate-in zoom-in-90 duration-300">
-                        <RefreshCw className="text-blue-500 animate-spin mx-auto mb-6" size={64} />
-                        <div className="text-white font-black text-[10px] uppercase tracking-[0.4em]">Decrypting Plate...</div>
-                        <div className="text-white/30 text-[8px] mt-4 font-mono">OCR HANDSHAKE...</div>
-                      </div>
-                    ) : (
-                      <div className="text-center opacity-20">
-                        <Crosshair className="text-white mx-auto mb-6" size={80} strokeWidth={1} />
-                        <div className="text-white font-black text-[12px] uppercase tracking-[0.2em]">Align Crosshair</div>
-                      </div>
-                    )}
-                  </div>
-                  {scanning && <div className="absolute top-0 w-full h-[2px] bg-blue-500 shadow-[0_0_40px_rgba(59,130,246,1)] animate-pulse" style={{ top: '40%' }} />}
-
-                  <div className="absolute bottom-12 inset-x-12">
-                    <button
-                      onClick={() => {
-                        setScanning(true);
-                        setTimeout(() => {
-                          setScanning(false);
-                          setScannedUnit(UNIT_DB['4TTR6036C1000A']);
-                          setScreen('Dashboard');
-                        }, 2200);
-                      }}
-                      className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-sm uppercase tracking-[0.3em] shadow-2xl active:scale-95 transition-all"
-                    >
-                      Authenticate
-                    </button>
-                    <button onClick={() => setScreen('Home')} className="w-full mt-4 text-white/40 font-black text-[10px] uppercase tracking-widest">Cancel</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {screen === 'Dashboard' && scannedUnit && (
-              <div className="space-y-6 animate-in fade-in slide-in-from-right-10 duration-500">
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setScreen('Home')} className="p-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 shadow-sm active:scale-90"><ArrowLeft size={24} /></button>
-                  <div>
-                    <h3 className="font-black text-3xl tracking-tighter leading-none">Unit Profile</h3>
-                    <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mt-2">Verified SN: {scannedUnit.serial}</p>
-                  </div>
-                </div>
-
-                <div className="flex bg-white p-1.5 rounded-3xl border border-slate-200 overflow-x-auto no-scrollbar shadow-inner">
-                  {['General', 'Warranty', 'History', 'Docs'].map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={`flex-1 px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-blue-600 text-white shadow-xl shadow-blue-200' : 'text-slate-400'}`}
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-
-                {activeTab === 'General' && (
-                  <div className="space-y-6 animate-in slide-in-from-right-4">
-                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/40">
-                      <div className="flex items-center gap-2 text-emerald-600 text-[10px] font-black uppercase mb-4">
-                        <BadgeCheck size={16} /> Certified Match
-                      </div>
-                      <h4 className="text-3xl font-black tracking-tight mb-2">{scannedUnit.model}</h4>
-                      <p className="text-slate-400 font-bold text-sm mb-6">{scannedUnit.brand} Residential System</p>
-                      <div className="grid grid-cols-2 gap-4 border-t border-slate-50 pt-6">
-                        <div>
-                          <div className="text-[10px] font-black text-slate-400 uppercase mb-1">Install Date</div>
-                          <div className="font-black text-slate-800">06/15/2021</div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-black text-slate-400 uppercase mb-1">Zone</div>
-                          <div className="font-black text-slate-800">Master Suite</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-950 p-10 rounded-[3.5rem] text-white shadow-3xl relative overflow-hidden">
-                      <div className="flex justify-between items-center mb-8 relative z-10">
-                        <span className="font-black text-[10px] uppercase text-blue-500 tracking-[0.3em]">Lifecycle Diagram</span>
-                        <div className="bg-blue-500/10 p-2 rounded-xl text-blue-400"><Crosshair size={20} /></div>
-                      </div>
-                      <div className="aspect-square bg-slate-900 rounded-[2.5rem] relative border border-white/5">
-                        {scannedUnit.diagram.map(point => (
-                          <div key={point.id} className="absolute group" style={{ top: point.top, left: point.left }}>
-                            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center font-black text-sm animate-pulse shadow-2xl shadow-blue-500/50 cursor-pointer hover:scale-125 transition-all">
-                              {point.id}
-                            </div>
-                            <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-white text-slate-900 px-4 py-2 rounded-2xl text-[10px] font-black shadow-2xl z-50 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
-                              {point.name}
-                            </div>
-                          </div>
-                        ))}
-                        <Wind className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white/5 w-40 h-40" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'Warranty' && (
-                  <div className="space-y-4 animate-in slide-in-from-right-4">
-                    <div className="bg-emerald-600 p-10 rounded-[3.5rem] text-white shadow-2xl relative overflow-hidden">
-                      <BadgeCheck size={80} className="absolute -right-4 -top-4 text-white/10 rotate-12" />
-                      <div className="flex items-center gap-2 text-emerald-200 text-[11px] font-black uppercase mb-3">
-                        <ShieldCheck size={18} /> Digital Certificate
-                      </div>
-                      <h4 className="text-3xl font-black tracking-tighter">Verified Active</h4>
-                      <p className="text-emerald-50/70 text-sm mt-3 leading-relaxed font-medium">Standard manufacturer parts protection is valid until 2031.</p>
-                    </div>
-
-                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/40">
-                      <h5 className="font-black text-[11px] uppercase tracking-widest text-slate-400 mb-6">Coverage Matrix</h5>
-                      <div className="space-y-2">
-                        {scannedUnit.coverage.map((c, i) => (
-                          <div key={i} className="flex justify-between items-center py-4 border-b border-slate-50 last:border-0 group">
-                            <div>
-                              <span className="font-black text-slate-800 group-hover:text-blue-600 transition-colors">{c.item}</span>
-                              <div className="text-[9px] font-black uppercase text-slate-300 tracking-widest mt-1">{c.type}</div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              {c.covered ?
-                                <div className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1"><ShieldCheck size={12} /> Covered</div> :
-                                <div className="bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1"><Info size={12} /> Billable</div>
-                              }
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'History' && (
-                  <div className="space-y-4 animate-in slide-in-from-right-4">
-                    {scannedUnit.claimsHistory.map((h, i) => (
-                      <div key={i} className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/40 flex items-center gap-6">
-                        <div className={`w-16 h-16 rounded-[1.8rem] flex items-center justify-center shrink-0 shadow-inner ${h.type === 'Warranty Claim' ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
-                          {h.type === 'Warranty Claim' ? <FileSearch size={30} /> : <Wrench size={30} />}
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{h.date}</span>
-                            <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">{h.status}</span>
-                          </div>
-                          <h6 className="font-black text-xl text-slate-800 tracking-tight leading-none mb-1">{h.part}</h6>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase mt-2 tracking-tight">{h.type}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {activeTab === 'Docs' && (
-                  <div className="space-y-4 animate-in slide-in-from-right-4">
-                    {scannedUnit.manuals.map((m, i) => (
-                      <button key={i} className="w-full bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/40 flex items-center justify-between group">
-                        <div className="flex items-center gap-6">
-                          <div className="w-16 h-16 bg-slate-950 text-white rounded-[1.8rem] flex items-center justify-center group-hover:bg-blue-600 transition-colors shadow-xl">
-                            <BookOpen size={30} />
-                          </div>
-                          <div className="text-left">
-                            <h6 className="font-black text-lg text-slate-800 tracking-tight">{m.title}</h6>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{m.size}</p>
-                          </div>
-                        </div>
-                        <ChevronRight className="text-slate-300" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="sticky bottom-6 pt-6 z-50">
-                  <button onClick={() => setScreen('Catalog')} className="w-full bg-blue-600 text-white py-6 rounded-[2.2rem] font-black text-xl flex items-center justify-center gap-4 shadow-[0_20px_40px_rgba(37,99,235,0.3)] active:scale-95 transition-all">
-                    <Wrench size={24} /> Order / File Claim
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {screen === 'Catalog' && scannedUnit && (
-              <div className="space-y-5 animate-in slide-in-from-bottom-10 duration-500">
-                <div className="flex items-center gap-4 mb-6">
-                  <button onClick={() => setScreen('Dashboard')} className="p-5 bg-white border border-slate-200 rounded-[1.8rem] shadow-sm"><ArrowLeft size={24} /></button>
-                  <h3 className="font-black text-3xl tracking-tighter">Part Intel</h3>
-                </div>
-
-                {scannedUnit.coverage.map((c, i) => (
-                  <div key={i} className="bg-white p-8 rounded-[3.5rem] border border-slate-100 shadow-xl flex flex-col gap-8">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="mb-3">
-                          <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full tracking-widest ${c.covered ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                            {c.covered ? 'Full Coverage' : 'Billable Part'}
+                      <div className="flex items-center gap-2">
+                        {order.urgent && (
+                          <span className="px-3 py-1 bg-red-600 text-white text-xs font-bold rounded-full">
+                            URGENT
                           </span>
-                        </div>
-                        <h4 className="text-2xl font-black text-slate-800 leading-none">{c.item}</h4>
-                        <p className="text-[10px] font-black text-slate-300 uppercase mt-3 tracking-[0.2em]">{c.type} Spec</p>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-2xl font-black ${c.covered ? 'text-emerald-600' : 'text-slate-900'}`}>
-                          {c.covered ? '$0.00' : `$${(c.oemCost * 8).toLocaleString()}`}
-                        </div>
-                        <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1">Retail Est.</div>
+                        )}
+                        <span className={`px-3 py-1 text-xs font-bold rounded-full ${
+                          order.status === 'pending' ? 'bg-yellow-600 text-white' :
+                          order.status === 'approved' ? 'bg-blue-600 text-white' :
+                          'bg-green-600 text-white'
+                        }`}>
+                          {order.status.toUpperCase()}
+                        </span>
                       </div>
                     </div>
+
+                    <div className="bg-slate-900 rounded-lg p-4 mb-4">
+                      <p className="text-white font-bold mb-2">Parts ({order.parts.length})</p>
+                      {order.parts.map((part, i) => (
+                        <div key={i} className="flex justify-between text-sm py-1">
+                          <span className="text-slate-300">{part.name} x{part.quantity}</span>
+                          <span className="text-slate-400">{part.oemPartNumber}</span>
+                        </div>
+                      ))}
+                    </div>
+
                     <button
-                      onClick={() => handleOrder(c)}
-                      className={`w-full py-6 rounded-[1.8rem] font-black text-[12px] uppercase tracking-[0.3em] flex items-center justify-center gap-4 shadow-xl active:scale-95 transition-all ${isUrgent ? 'bg-red-600 text-white shadow-red-100' : 'bg-slate-950 text-white'}`}
+                      onClick={() => exportToExcel(order)}
+                      className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-green-700"
                     >
-                      {c.covered ? 'Process Warranty' : 'Dispatch Order'}
-                      <Send size={16} />
+                      <Download className="w-5 h-5" />
+                      Export to Excel
                     </button>
                   </div>
                 ))}
               </div>
             )}
-
-            {screen === 'Success' && (
-              <div className="text-center py-20 animate-in zoom-in-95 duration-500">
-                <div className="w-40 h-40 bg-white text-emerald-500 rounded-[4rem] flex items-center justify-center mx-auto mb-12 shadow-2xl shadow-emerald-100">
-                  <CheckCircle2 size={80} strokeWidth={3} />
-                </div>
-                <h2 className="text-5xl font-black tracking-tighter uppercase leading-none">Logged</h2>
-                <p className="text-slate-400 mt-6 px-12 text-lg font-medium leading-relaxed">Office notified. Claim synced to lifecycle registry.</p>
-                <button onClick={() => setScreen('Home')} className="mt-16 bg-blue-600 text-white px-16 py-6 rounded-[2.5rem] font-black text-xl shadow-2xl active:scale-95 transition-all">Home</button>
-              </div>
-            )}
-
-            {screen === 'Log' && (
-              <div className="space-y-5 animate-in fade-in slide-in-from-right-6">
-                <div className="flex items-center gap-4 mb-8">
-                  <button onClick={() => setScreen('Home')} className="p-5 bg-white border border-slate-200 rounded-[1.8rem] shadow-sm"><ArrowLeft size={24} /></button>
-                  <h2 className="text-3xl font-black tracking-tighter">Activity Cloud</h2>
-                </div>
-                {tickets.length === 0 && <p className="text-slate-400 italic text-center p-20">No active dispatches found.</p>}
-                {tickets.map(t => (
-                  <div key={t.id} className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/40 flex items-center justify-between group">
-                    <div>
-                      <div className="text-[10px] font-black uppercase text-blue-600 tracking-widest mb-1">{t.status}</div>
-                      <div className="font-black text-2xl text-slate-800 tracking-tighter">{t.partName}</div>
-                      <div className="text-[10px] text-slate-300 font-black uppercase mt-2 tracking-[0.2em]">SN: {t.unitSerial}</div>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl text-slate-300"><ChevronRight size={24} /></div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+          </div>
         )}
-      </main>
 
-      {/* ENTERPRISE FOOTER NAV */}
-      {view === 'Field' && !['Scanner', 'Success'].includes(screen) && (
-        <nav className="fixed bottom-10 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-white/80 backdrop-blur-3xl rounded-[3.5rem] p-3 flex justify-around border border-slate-200 shadow-[0_30px_60px_rgba(0,0,0,0.1)] z-[1000] ring-1 ring-black/5">
-          <button onClick={() => setScreen('Home')} className={`p-6 rounded-[2.5rem] transition-all duration-500 ${screen === 'Home' ? 'bg-blue-600 text-white shadow-2xl scale-110' : 'text-slate-300 hover:text-slate-600'}`}>
-            <Box size={26} strokeWidth={screen === 'Home' ? 3 : 2} />
+        {/* Scanner Modal */}
+        {scanning && (
+          <div className="fixed inset-0 bg-black/90 z-50 flex flex-col">
+            <div className="bg-slate-900 p-4 flex items-center justify-between">
+              <h2 className="text-white font-bold text-lg">Scan Data Plate</h2>
+              <button onClick={stopScan} className="p-2">
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
+            <div className="flex-1 flex items-center justify-center p-4">
+              <div id="reader" className="w-full max-w-md"></div>
+            </div>
+            <div className="bg-slate-900 p-6 text-center">
+              <p className="text-white/70 text-sm">Position the serial number barcode within the frame</p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // PRODUCT DETAILS SCREEN
+  if (screen === 'product-details' && unitData) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <div className="bg-slate-900 text-white p-4">
+          <div className="flex items-center justify-between">
+            <button onClick={() => setScreen('home')} className="p-2">
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div className="text-center flex-1">
+              <p className="font-bold text-lg">{unitData.model}</p>
+              <p className="text-sm text-red-400">{unitData.serial}</p>
+            </div>
+            <div className="w-10"></div>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <MenuItem
+            icon={Shield}
+            title="Entitlement Overview"
+            onClick={() => setScreen('entitlement')}
+          />
+          <MenuItem
+            icon={Image}
+            title="Drawing"
+            onClick={() => setScreen('drawing')}
+          />
+          <MenuItem
+            icon={Wrench}
+            title="View Parts"
+            onClick={() => setScreen('parts-list')}
+          />
+          <MenuItem
+            icon={Book}
+            title="Installation Literature"
+            onClick={() => window.open(unitData.literatureUrls.installation, '_blank')}
+          />
+          <MenuItem
+            icon={FileText}
+            title="Diagnostic Literature"
+            onClick={() => window.open(unitData.literatureUrls.diagnostic, '_blank')}
+          />
+          <MenuItem
+            icon={Package}
+            title="Warranty Information"
+            onClick={() => window.open(unitData.literatureUrls.warranty, '_blank')}
+          />
+          <MenuItem
+            icon={Calendar}
+            title="Service History"
+            onClick={() => setScreen('service-history')}
+          />
+        </div>
+
+        {selectedParts.length > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <p className="font-bold text-slate-900">Parts Selected: {selectedParts.length}</p>
+              <button
+                onClick={() => exportToExcel()}
+                className="text-blue-600 font-bold text-sm"
+              >
+                Export
+              </button>
+            </div>
+            <button
+              onClick={submitOrder}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold"
+            >
+              Submit Order
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ENTITLEMENT/WARRANTY SCREEN
+  if (screen === 'entitlement' && unitData) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Header title="Entitlement Overview" onBack={() => setScreen('product-details')} />
+        <div className="p-6 space-y-4">
+          <InfoRow label="Owner" value={unitData.owner} />
+          <InfoRow label="Date Installed" value={unitData.installDate} />
+          <InfoRow label="Date Transferred" value={unitData.dateTransferred} />
+          <InfoRow label="Policy Description" value={unitData.warrantyPolicy} />
+          <InfoRow label="Shipped Date" value={unitData.shippedDate} />
+          <InfoRow
+            label="Warranty Status"
+            value={unitData.warrantyStatus}
+            highlight={unitData.warrantyStatus === 'Active'}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // DRAWING/DIAGRAM SCREEN
+  if (screen === 'drawing' && unitData) {
+    return (
+      <div className="min-h-screen bg-white">
+        <Header title="Drawing" onBack={() => setScreen('product-details')} />
+        <div className="p-4">
+          <h2 className="font-bold text-xl mb-4">{unitData.productName}</h2>
+          <div className="bg-slate-100 rounded-lg p-4 mb-4">
+            <p className="text-sm text-slate-600 mb-1"><strong>Model #</strong> {unitData.model}</p>
+            <p className="text-sm text-slate-600"><strong>Serial #</strong> {unitData.serial}</p>
+          </div>
+
+          {/* Exploded Diagram */}
+          <div className="relative border border-slate-300 rounded-lg overflow-hidden">
+            <img
+              src={unitData.diagramUrl}
+              alt="Unit Diagram"
+              className="w-full"
+            />
+            {/* Interactive hotspots for parts */}
+            {unitData.parts
+              .filter(p => p.diagramPosition)
+              .map(part => (
+                <button
+                  key={part.id}
+                  onClick={() => {
+                    addPartToOrder(part);
+                    startTroubleshooting(part);
+                  }}
+                  className="absolute w-8 h-8 bg-red-600 text-white rounded-full font-bold text-xs flex items-center justify-center hover:scale-125 transition shadow-lg"
+                  style={{
+                    top: part.diagramPosition!.top,
+                    left: part.diagramPosition!.left
+                  }}
+                >
+                  {part.number}
+                </button>
+              ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // PARTS LIST SCREEN
+  if (screen === 'parts-list' && unitData) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Header title="Parts List" onBack={() => setScreen('product-details')} />
+        <div className="p-4 space-y-3 pb-32">
+          {unitData.parts.map(part => (
+            <div key={part.id} className="bg-white rounded-lg p-4 shadow">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1">
+                  <p className="font-bold text-slate-900">{part.name}</p>
+                  <p className="text-sm text-slate-600">Part # {part.number}</p>
+                  <p className="text-xs text-slate-500">OEM: {part.oemPartNumber}</p>
+                  {part.substitutions.length > 0 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      Alt: {part.substitutions.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-slate-900">${part.retailPrice.toFixed(2)}</p>
+                  <p className="text-xs text-slate-500">OEM: ${part.oemCost.toFixed(2)}</p>
+                  {part.warrantyEligible && (
+                    <span className="inline-block mt-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded">
+                      WARRANTY
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => startTroubleshooting(part)}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-bold"
+                >
+                  Troubleshoot
+                </button>
+                <button
+                  onClick={() => addPartToOrder(part)}
+                  className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-bold"
+                >
+                  Add to Order
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {selectedParts.length > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-lg">
+            <div className="mb-3">
+              <label className="flex items-center gap-2 mb-2">
+                <input
+                  type="checkbox"
+                  checked={urgent}
+                  onChange={(e) => setUrgent(e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span className="font-bold text-slate-900">Mark as Urgent</span>
+              </label>
+              <p className="text-sm text-slate-600">Selected: {selectedParts.length} parts</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => exportToExcel()}
+                className="flex-1 bg-slate-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2"
+              >
+                <Download className="w-5 h-5" />
+                Export
+              </button>
+              <button
+                onClick={submitOrder}
+                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-bold"
+              >
+                Submit Order
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // TROUBLESHOOTING SCREEN
+  if (screen === 'troubleshooting' && troubleshootingPart && unitData) {
+    const steps = unitData.troubleshooting[troubleshootingPart.id] || [];
+    const currentStep = steps[troubleshootingStep];
+
+    if (!currentStep) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+          <div className="text-center p-6">
+            <p className="text-slate-600 mb-4">No troubleshooting data available for this part</p>
+            <button
+              onClick={() => setScreen('parts-list')}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold"
+            >
+              Back to Parts
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const handleAnswer = (answer: 'yes' | 'no') => {
+      const nextStep = answer === 'yes' ? currentStep.yesNext : currentStep.noNext;
+      if (nextStep !== undefined) {
+        setTroubleshootingStep(nextStep);
+      } else {
+        // Mark as complete
+        setSelectedParts(selectedParts.map(p =>
+          p.id === troubleshootingPart.id ? { ...p, troubleshootingComplete: true } : p
+        ));
+        setScreen('parts-list');
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Header
+          title={`Troubleshooting: ${troubleshootingPart.name}`}
+          onBack={() => setScreen('parts-list')}
+        />
+        <div className="p-6">
+          <div className="bg-white rounded-xl p-6 shadow-lg mb-6">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="bg-blue-100 p-3 rounded-full">
+                <AlertTriangle className="w-8 h-8 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm text-slate-500 mb-1">Step {troubleshootingStep + 1} of {steps.length}</p>
+                <p className="text-lg font-bold text-slate-900">{currentStep.question}</p>
+              </div>
+            </div>
+
+            {currentStep.action ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                <p className="font-bold text-green-900 mb-2">Recommendation:</p>
+                <p className="text-green-800">{currentStep.action}</p>
+              </div>
+            ) : null}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleAnswer('yes')}
+                className="flex-1 bg-green-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 className="w-6 h-6" />
+                Yes
+              </button>
+              <button
+                onClick={() => handleAnswer('no')}
+                className="flex-1 bg-red-600 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2"
+              >
+                <XCircle className="w-6 h-6" />
+                No
+              </button>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              setTroubleshootingStep(0);
+              setScreen('parts-list');
+            }}
+            className="w-full text-slate-600 font-bold text-sm"
+          >
+            Cancel Troubleshooting
           </button>
-          <button onClick={() => setScreen('Scanner')} className={`p-6 rounded-[2.5rem] transition-all duration-500 ${screen === 'Scanner' ? 'bg-blue-600 text-white shadow-2xl scale-110' : 'text-slate-300 hover:text-slate-600'}`}>
-            <Scan size={26} strokeWidth={screen === 'Scanner' ? 3 : 2} />
+        </div>
+      </div>
+    );
+  }
+
+  // SERVICE HISTORY SCREEN
+  if (screen === 'service-history' && unitData) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Header title="Service History" onBack={() => setScreen('product-details')} />
+        <div className="p-4 space-y-3">
+          {unitData.serviceHistory.length === 0 ? (
+            <div className="bg-white rounded-lg p-8 text-center">
+              <p className="text-slate-500">No service history available</p>
+            </div>
+          ) : (
+            unitData.serviceHistory.map((record, i) => (
+              <div key={i} className="bg-white rounded-lg p-4 shadow">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="font-bold text-slate-900">{record.partReplaced}</p>
+                    <p className="text-sm text-slate-600">{record.tech}</p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    record.type === 'Warranty' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {record.type}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">{record.date}</p>
+                <p className="text-xs text-slate-500">Status: {record.status}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ORDER SUBMITTED SCREEN
+  if (screen === 'order-submitted') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center p-8">
+          <div className="bg-green-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CheckCircle2 className="w-16 h-16 text-green-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Order Submitted!</h2>
+          <p className="text-slate-600 mb-8">Your parts order has been sent to the office</p>
+          <button
+            onClick={() => {
+              setScreen('home');
+              setUnitData(null);
+            }}
+            className="bg-blue-600 text-white px-8 py-3 rounded-lg font-bold"
+          >
+            Back to Home
           </button>
-          <button onClick={() => setScreen('Log')} className={`p-6 rounded-[2.5rem] transition-all duration-500 ${screen === 'Log' ? 'bg-blue-600 text-white shadow-2xl scale-110' : 'text-slate-300 hover:text-slate-600'}`}>
-            <History size={26} strokeWidth={screen === 'Log' ? 3 : 2} />
-          </button>
-        </nav>
-      )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// Helper Components
+function MenuItem({ icon: Icon, title, onClick }: { icon: any; title: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full bg-white rounded-lg p-4 shadow flex items-center justify-between group hover:bg-slate-50"
+    >
+      <div className="flex items-center gap-3">
+        <div className="bg-red-100 p-2 rounded-lg">
+          <Icon className="w-6 h-6 text-red-600" />
+        </div>
+        <span className="font-bold text-slate-900">{title}</span>
+      </div>
+      <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-600" />
+    </button>
+  );
+}
+
+function Header({ title, onBack }: { title: string; onBack: () => void }) {
+  return (
+    <div className="bg-slate-900 text-white p-4 flex items-center gap-4 sticky top-0 z-10">
+      <button onClick={onBack} className="p-2">
+        <ArrowLeft className="w-6 h-6" />
+      </button>
+      <h1 className="font-bold text-lg">{title}</h1>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className="border-b border-slate-200 pb-3">
+      <p className="text-sm font-bold text-slate-600 mb-1">{label}:</p>
+      <p className={`${highlight ? 'text-green-600 font-bold' : 'text-slate-900'}`}>{value}</p>
     </div>
   );
 }

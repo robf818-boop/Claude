@@ -1,0 +1,584 @@
+/**
+ * The Executor - Order Management Module
+ *
+ * Converts trading signals into specific option contracts and manages orders.
+ * Handles position sizing, order execution, and order lifecycle.
+ *
+ * The Executor acts decisively on the Oracle's insights.
+ */
+
+import {
+  ExecutorConfig,
+  TradingSignal,
+  OptionContract,
+  OptionChain,
+  Order,
+  Position,
+  AssetClass,
+  Side,
+  ModuleStatus,
+  TradingEvent,
+} from '../core/types';
+import { EventBus, getEventBus } from '../events/EventBus';
+
+interface OrderRequest {
+  signal: TradingSignal;
+  optionContract?: OptionContract;
+  quantity: number;
+  limitPrice?: number;
+}
+
+interface ExecutionResult {
+  success: boolean;
+  order?: Order;
+  error?: string;
+}
+
+export class Executor {
+  private config: ExecutorConfig;
+  private eventBus: EventBus;
+  private status: ModuleStatus = 'stopped';
+
+  // Order and position tracking
+  private orders: Map<string, Order> = new Map();
+  private positions: Map<string, Position> = new Map();
+  private orderIdCounter: number = 0;
+  private positionIdCounter: number = 0;
+
+  // Account state (simulated)
+  private accountBalance: number = 100000; // $100k starting balance
+  private buyingPower: number = 100000;
+
+  // Event subscriptions
+  private subscriptionIds: string[] = [];
+
+  constructor(config: ExecutorConfig) {
+    this.config = config;
+    this.eventBus = getEventBus();
+  }
+
+  /**
+   * Start the Executor
+   */
+  public async start(): Promise<void> {
+    if (this.status === 'running') {
+      console.warn('[Executor] Already running');
+      return;
+    }
+
+    this.status = 'starting';
+    console.log('[Executor] Starting order management...');
+
+    // Subscribe to trading signals
+    const signalSubId = this.eventBus.subscribe<TradingSignal>(
+      ['signal_generated'],
+      (event) => this.onSignalReceived(event),
+      30 // Lower priority than Oracle
+    );
+    this.subscriptionIds.push(signalSubId);
+
+    this.status = 'running';
+    console.log('[Executor] Order management active');
+    this.emitStatus();
+  }
+
+  /**
+   * Stop the Executor
+   */
+  public stop(): void {
+    this.status = 'stopped';
+
+    // Unsubscribe from events
+    this.subscriptionIds.forEach((id) => this.eventBus.unsubscribe(id));
+    this.subscriptionIds = [];
+
+    console.log('[Executor] Stopped');
+    this.emitStatus();
+  }
+
+  /**
+   * Get current status
+   */
+  public getStatus(): ModuleStatus {
+    return this.status;
+  }
+
+  /**
+   * Reset account to starting values
+   */
+  public resetAccount(): void {
+    this.accountBalance = 100000;
+    this.buyingPower = 100000;
+    this.positions.clear();
+    this.orders.clear();
+    console.log('[Executor] Account reset to $100,000');
+  }
+
+  /**
+   * Get all orders
+   */
+  public getOrders(): Order[] {
+    return Array.from(this.orders.values());
+  }
+
+  /**
+   * Get order by ID
+   */
+  public getOrder(orderId: string): Order | null {
+    return this.orders.get(orderId) || null;
+  }
+
+  /**
+   * Get all positions
+   */
+  public getPositions(): Position[] {
+    return Array.from(this.positions.values());
+  }
+
+  /**
+   * Get position by symbol
+   */
+  public getPosition(symbol: string): Position | null {
+    return this.positions.get(symbol) || null;
+  }
+
+  /**
+   * Get account info
+   */
+  public getAccountInfo(): {
+    balance: number;
+    buyingPower: number;
+    equity: number;
+    openPnL: number;
+  } {
+    const openPnL = this.calculateOpenPnL();
+    return {
+      balance: this.accountBalance,
+      buyingPower: this.buyingPower,
+      equity: this.accountBalance + openPnL,
+      openPnL,
+    };
+  }
+
+  /**
+   * Execute a trade based on a signal
+   */
+  public async executeSignal(
+    signal: TradingSignal,
+    optionChain?: OptionChain
+  ): Promise<ExecutionResult> {
+    if (this.status !== 'running') {
+      return { success: false, error: 'Executor not running' };
+    }
+
+    // Validate signal
+    if (!signal.isValid) {
+      return { success: false, error: 'Invalid signal' };
+    }
+
+    // Check if we already have a position in this symbol
+    const existingPosition = this.positions.get(signal.symbol);
+    if (existingPosition) {
+      return {
+        success: false,
+        error: `Already have position in ${signal.symbol}`,
+      };
+    }
+
+    // Select option contract if we have chain data
+    let optionContract: OptionContract | undefined;
+    if (optionChain && signal.optionRecommendation) {
+      const selected = this.selectOptionContract(signal, optionChain);
+      if (!selected) {
+        return {
+          success: false,
+          error: 'No suitable option contract found',
+        };
+      }
+      optionContract = selected;
+    }
+
+    // Calculate position size
+    const quantity = this.calculatePositionSize(signal, optionContract);
+    if (quantity <= 0) {
+      return { success: false, error: 'Position size too small' };
+    }
+
+    // Create and submit order
+    const order = await this.submitOrder({
+      signal,
+      optionContract,
+      quantity,
+    });
+
+    return { success: true, order };
+  }
+
+  /**
+   * Close a position
+   */
+  public async closePosition(
+    positionId: string,
+    _reason: string = 'Manual close'
+  ): Promise<ExecutionResult> {
+    const position = this.positions.get(positionId);
+    if (!position) {
+      // Try finding by symbol (positions tab passes symbol sometimes)
+      const bySymbol = Array.from(this.positions.values()).find(p => p.symbol === positionId || p.id === positionId);
+      if (!bySymbol) {
+        return { success: false, error: 'Position not found' };
+      }
+      // Use the found position
+      const closingOrder = this.createOrder(
+        bySymbol.symbol,
+        bySymbol.assetClass,
+        bySymbol.side === 'long' ? 'short' : 'long',
+        bySymbol.quantity,
+        bySymbol.optionContract
+      );
+      await this.simulateFill(closingOrder, bySymbol.currentPrice);
+      return { success: true, order: closingOrder };
+    }
+
+    // Create closing order
+    const closingOrder = this.createOrder(
+      position.symbol,
+      position.assetClass,
+      position.side === 'long' ? 'short' : 'long', // Opposite side to close
+      position.quantity,
+      position.optionContract
+    );
+
+    // Simulate fill - this handles all the position closing logic
+    await this.simulateFill(closingOrder, position.currentPrice);
+
+    return { success: true, order: closingOrder };
+  }
+
+  /**
+   * Cancel an order
+   */
+  public async cancelOrder(orderId: string): Promise<boolean> {
+    const order = this.orders.get(orderId);
+    if (!order) return false;
+
+    if (order.status === 'pending') {
+      order.status = 'cancelled';
+      order.cancelledAt = Date.now();
+
+      this.eventBus.emit('order_cancelled', order, 'executor');
+      return true;
+    }
+
+    return false;
+  }
+
+  // Event Handlers
+
+  private async onSignalReceived(
+    event: TradingEvent<TradingSignal>
+  ): Promise<void> {
+    const signal = event.data;
+
+    console.log(
+      `[Executor] Received signal: ${signal.direction} ${signal.symbol}`
+    );
+
+    // Auto-execute if configured
+    if (!this.config.paperTrading) {
+      console.log('[Executor] Auto-execution disabled (live trading)');
+      return;
+    }
+
+    // For paper trading, auto-execute
+    const result = await this.executeSignal(signal);
+    if (!result.success) {
+      console.log(`[Executor] Execution failed: ${result.error}`);
+    }
+  }
+
+  // Option Selection
+
+  private selectOptionContract(
+    signal: TradingSignal,
+    chain: OptionChain
+  ): OptionContract | null {
+    const rec = signal.optionRecommendation;
+    if (!rec) return null;
+
+    const contracts = signal.direction === 'bullish' ? chain.calls : chain.puts;
+    const targetDelta = Math.abs(rec.preferredDelta);
+    const targetDTE = rec.preferredDTE;
+
+    let bestContract: OptionContract | null = null;
+    let bestScore = Infinity;
+
+    contracts.forEach((contract) => {
+      // Filter criteria
+      if (contract.openInterest < rec.minOpenInterest) return;
+
+      const spread = (contract.ask - contract.bid) / contract.mark;
+      if (spread > rec.maxBidAskSpread) return;
+
+      if (rec.maxIVRank && contract.ivRank && contract.ivRank > rec.maxIVRank) {
+        return;
+      }
+
+      // Score based on delta and DTE proximity
+      const deltaScore = Math.abs(Math.abs(contract.greeks.delta) - targetDelta);
+      const dteScore = Math.abs(contract.daysToExpiration - targetDTE) / 30; // Normalize
+
+      const totalScore = deltaScore * 2 + dteScore; // Weight delta more
+
+      if (totalScore < bestScore) {
+        bestScore = totalScore;
+        bestContract = contract;
+      }
+    });
+
+    return bestContract;
+  }
+
+  // Position Sizing
+
+  private calculatePositionSize(
+    _signal: TradingSignal,
+    optionContract?: OptionContract
+  ): number {
+    // VERY conservative fixed position sizing for paper trading
+    // Keep positions small and predictable
+
+    if (optionContract) {
+      return 2; // Always 2 option contracts
+    } else {
+      return 10; // Always 10 shares of stock
+    }
+  }
+
+  // Order Management
+
+  private async submitOrder(request: OrderRequest): Promise<Order> {
+    const { signal, optionContract, quantity } = request;
+
+    const order = this.createOrder(
+      optionContract?.symbol || signal.symbol,
+      optionContract ? 'option' : 'equity',
+      signal.direction === 'bullish' ? 'long' : 'short',
+      quantity,
+      optionContract
+    );
+
+    // Store order
+    this.orders.set(order.id, order);
+
+    // Emit order submitted event
+    this.eventBus.emit('order_submitted', order, 'executor');
+
+    console.log(
+      `[Executor] Order submitted: ${order.side} ${order.quantity}x ${order.symbol}`
+    );
+
+    // Simulate execution (in paper trading mode)
+    if (this.config.paperTrading) {
+      const fillPrice = optionContract
+        ? optionContract.ask // Buy at ask
+        : signal.entry;
+
+      await this.simulateFill(order, fillPrice);
+    }
+
+    return order;
+  }
+
+  private createOrder(
+    symbol: string,
+    assetClass: AssetClass,
+    side: Side,
+    quantity: number,
+    optionContract?: OptionContract
+  ): Order {
+    return {
+      id: `ord_${++this.orderIdCounter}_${Date.now()}`,
+      clientOrderId: `client_${Date.now()}`,
+      timestamp: Date.now(),
+      symbol,
+      assetClass,
+      optionContract,
+      side,
+      quantity,
+      filledQuantity: 0,
+      orderType: this.config.defaultOrderType,
+      timeInForce: this.config.defaultTimeInForce,
+      status: 'pending',
+      submittedAt: Date.now(),
+    };
+  }
+
+  private async simulateFill(order: Order, price: number): Promise<void> {
+    // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Add slippage
+    const slippage = price * (Math.random() * this.config.maxSlippage);
+    const fillPrice = order.side === 'long' ? price + slippage : price - slippage;
+
+    // Update order
+    order.status = 'filled';
+    order.filledQuantity = order.quantity;
+    order.avgFillPrice = fillPrice;
+    order.filledAt = Date.now();
+
+    // Emit order filled event
+    this.eventBus.emit('order_filled', order, 'executor');
+
+    console.log(
+      `[Executor] Order filled: ${order.quantity}x ${order.symbol} @ ${fillPrice.toFixed(2)}`
+    );
+
+    // Create or update position
+    this.updatePositionFromFill(order);
+  }
+
+  private updatePositionFromFill(order: Order): void {
+    const existingPosition = Array.from(this.positions.values()).find(
+      (p) => p.symbol === order.symbol
+    );
+
+    const cost = order.avgFillPrice! * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
+
+    if (existingPosition) {
+      // Update existing position
+      if (existingPosition.side === order.side) {
+        // Adding to position - deduct buying power
+        const totalCost =
+          existingPosition.avgEntryPrice * existingPosition.quantity +
+          order.avgFillPrice! * order.filledQuantity;
+        const totalQty = existingPosition.quantity + order.filledQuantity;
+
+        existingPosition.avgEntryPrice = totalCost / totalQty;
+        existingPosition.quantity = totalQty;
+        this.buyingPower = Math.max(0, this.buyingPower - cost);
+      } else {
+        // Closing position - ADD buying power back
+        const pnl = (order.avgFillPrice! - existingPosition.avgEntryPrice) *
+          order.filledQuantity *
+          (existingPosition.side === 'long' ? 1 : -1) *
+          (order.assetClass === 'option' ? 100 : 1);
+
+        existingPosition.quantity -= order.filledQuantity;
+
+        // Return the original cost + P&L to buying power
+        const originalCost = existingPosition.avgEntryPrice * order.filledQuantity * (order.assetClass === 'option' ? 100 : 1);
+        this.buyingPower += originalCost;
+        this.accountBalance += pnl;
+
+        if (existingPosition.quantity <= 0) {
+          this.positions.delete(existingPosition.id);
+
+          this.eventBus.emit(
+            'position_closed',
+            {
+              position: existingPosition,
+              closePrice: order.avgFillPrice,
+              pnl: pnl,
+            },
+            'executor'
+          );
+
+          console.log(`[Executor] Position closed: ${existingPosition.symbol} | P&L: $${pnl.toFixed(2)}`);
+        }
+      }
+    } else {
+      // Create new position - deduct buying power
+      const position = this.createPosition(order);
+      this.positions.set(position.id, position);
+
+      this.eventBus.emit('position_opened', position, 'executor');
+
+      console.log(
+        `[Executor] Position opened: ${position.side} ${position.quantity}x ${position.symbol}`
+      );
+
+      this.buyingPower = Math.max(0, this.buyingPower - cost);
+    }
+  }
+
+  private createPosition(order: Order): Position {
+    const currentPrice = order.avgFillPrice!;
+
+    return {
+      id: `pos_${++this.positionIdCounter}_${Date.now()}`,
+      symbol: order.symbol,
+      assetClass: order.assetClass,
+      side: order.side,
+      quantity: order.filledQuantity,
+      avgEntryPrice: order.avgFillPrice!,
+      currentPrice,
+      unrealizedPnL: 0,
+      unrealizedPnLPercent: 0,
+      realizedPnL: 0,
+      optionContract: order.optionContract,
+      currentGreeks: order.optionContract?.greeks,
+      openedAt: Date.now(),
+      lastUpdated: Date.now(),
+    };
+  }
+
+  /**
+   * Update position prices (called periodically)
+   */
+  public updatePositionPrices(prices: Map<string, number>): void {
+    this.positions.forEach((position) => {
+      const newPrice = prices.get(position.symbol);
+      if (newPrice) {
+        position.currentPrice = newPrice;
+        position.unrealizedPnL =
+          (newPrice - position.avgEntryPrice) *
+          position.quantity *
+          (position.side === 'long' ? 1 : -1) *
+          (position.assetClass === 'option' ? 100 : 1);
+        position.unrealizedPnLPercent =
+          (position.unrealizedPnL /
+            (position.avgEntryPrice * position.quantity * (position.assetClass === 'option' ? 100 : 1))) *
+          100;
+        position.lastUpdated = Date.now();
+
+        this.eventBus.emit('position_updated', position, 'executor');
+      }
+    });
+  }
+
+  private calculateOpenPnL(): number {
+    let totalPnL = 0;
+    this.positions.forEach((position) => {
+      totalPnL += position.unrealizedPnL;
+    });
+    return totalPnL;
+  }
+
+  private emitStatus(): void {
+    this.eventBus.emit(
+      'system_status',
+      {
+        module: 'executor',
+        status: this.status,
+      },
+      'executor'
+    );
+  }
+}
+
+// Default Executor configuration
+export const defaultExecutorConfig: ExecutorConfig = {
+  defaultOrderType: 'limit',
+  defaultTimeInForce: 'day',
+  maxSlippage: 0.001, // 0.1%
+  riskPerTradePercent: 2,
+  maxPositionPercent: 10,
+  targetDelta: 0.70,
+  targetDTE: 14,
+  maxBidAskSpreadPercent: 0.05,
+  minOpenInterest: 500,
+  paperTrading: true,
+  broker: 'mock',
+};

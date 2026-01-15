@@ -1,14 +1,17 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.defendiq.app',
-  appName: 'DefendIQ',
+  appId: 'com.autoflipper.app',
+  appName: 'AutoFlipper',
   webDir: 'dist',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'https',
+    // Allow connections to Netlify functions for Alpaca API
+    allowNavigation: ['*.netlify.app', '*.alpaca.markets']
   },
   ios: {
-    contentInset: 'automatic'
+    contentInset: 'automatic',
+    scheme: 'AutoFlipper'
   }
 };
 

@@ -1,41 +1,14 @@
-import { useState } from 'react';
-import { GameSituation, AgeLevel, SkillLevel } from './types';
-import { BaseballField } from './components/BaseballField';
-import { SituationSelector } from './components/SituationSelector';
-import { AIScenarioGenerator } from './components/AIScenarioGenerator';
-import { RulesHandbook } from './components/RulesHandbook';
-import { PlayerInstructions } from './components/PlayerInstructions';
-import { Play, BookOpen, Sparkles, Settings, Users } from 'lucide-react';
-
-type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings';
+import { AuthGate } from './components/AuthGate';
+import { TradingDashboard } from './components/trading/TradingDashboard';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('situations');
-  const [ageLevel, setAgeLevel] = useState<AgeLevel>('12u');
-  const [skillLevel, setSkillLevel] = useState<SkillLevel>('intermediate');
-  const [currentSituation, setCurrentSituation] = useState<GameSituation | null>(null);
-  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
-
-  const handleSimulate = () => {
-    if (!currentSituation) return;
-
-    setIsSimulating(true);
-    setSelectedPosition(null);
-
-    // Simulate animation of players moving to positions
-    setTimeout(() => {
-      setIsSimulating(false);
-    }, 1500);
-  };
-
-  const handleSelectSituation = (situation: GameSituation) => {
-    setCurrentSituation(situation);
-    setSelectedPosition(null);
-    setIsSimulating(false);
-  };
-
   return (
+    <AuthGate>
+      <TradingDashboard
+        symbols={['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMD']}
+        paperTrading={true}
+      />
+    </AuthGate>
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 to-green-600 text-white shadow-lg">

@@ -5,9 +5,10 @@ import { SituationSelector } from './components/SituationSelector';
 import { AIScenarioGenerator } from './components/AIScenarioGenerator';
 import { RulesHandbook } from './components/RulesHandbook';
 import { PlayerInstructions } from './components/PlayerInstructions';
-import { Play, BookOpen, Sparkles, Settings, Users } from 'lucide-react';
+import { DevelopmentTracker } from './components/DevelopmentTracker';
+import { Play, BookOpen, Sparkles, Settings, Users, ClipboardList } from 'lucide-react';
 
-type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings';
+type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings' | 'tracker';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('situations');
@@ -161,7 +162,7 @@ function App() {
           <div className="space-y-4">
             {/* Tab Navigation */}
             <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-              <div className="grid grid-cols-4 border-b">
+              <div className="grid grid-cols-5 border-b">
                 <button
                   onClick={() => setActiveTab('situations')}
                   className={`p-3 text-center font-medium transition-colors ${
@@ -194,6 +195,17 @@ function App() {
                 >
                   <BookOpen size={20} className="mx-auto mb-1" />
                   <span className="text-xs">Rules</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('tracker')}
+                  className={`p-3 text-center font-medium transition-colors ${
+                    activeTab === 'tracker'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <ClipboardList size={20} className="mx-auto mb-1" />
+                  <span className="text-xs">Tracker</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('settings')}
@@ -229,6 +241,10 @@ function App() {
                   <RulesHandbook ageLevel={ageLevel} />
                 )}
 
+                {activeTab === 'tracker' && (
+                  <DevelopmentTracker ageLevel={ageLevel} />
+                )}
+
                 {activeTab === 'settings' && (
                   <div className="space-y-4">
                     <h3 className="font-bold text-lg text-gray-900">About This Tool</h3>
@@ -247,6 +263,7 @@ function App() {
                           <li>Visual field with player positioning</li>
                           <li>Detailed instructions for each position</li>
                           <li>Practice mode for on-field training</li>
+                          <li>Development tracker for logging player progress</li>
                         </ul>
                       </div>
 

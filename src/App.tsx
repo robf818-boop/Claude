@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { GameSituation, AgeLevel, SkillLevel } from './types';
 import { BaseballField } from './components/BaseballField';
 import { SituationSelector } from './components/SituationSelector';
 import { AIScenarioGenerator } from './components/AIScenarioGenerator';
 import { RulesHandbook } from './components/RulesHandbook';
 import { PlayerInstructions } from './components/PlayerInstructions';
-import { Play, BookOpen, Sparkles, Settings, Users } from 'lucide-react';
+import { Play, BookOpen, Sparkles, Settings, Users, ChevronLeft, ChevronRight } from 'lucide-react';
+import { situations } from './data/situations';
 
 type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings';
 
@@ -16,6 +17,21 @@ function App() {
   const [currentSituation, setCurrentSituation] = useState<GameSituation | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
+
+  // Filter situations based on age and skill level for navigation
+  const filteredSituations = useMemo(() => {
+    return situations.filter(
+      (sit) =>
+        sit.ageLevel.includes(ageLevel) &&
+        sit.skillLevel.includes(skillLevel)
+    );
+  }, [ageLevel, skillLevel]);
+
+  // Find current situation index for navigation
+  const currentSituationIndex = useMemo(() => {
+    if (!currentSituation) return -1;
+    return filteredSituations.findIndex(s => s.id === currentSituation.id);
+  }, [currentSituation, filteredSituations]);
 
   const handleSimulate = () => {
     if (!currentSituation) return;
@@ -33,6 +49,18 @@ function App() {
     setCurrentSituation(situation);
     setSelectedPosition(null);
     setIsSimulating(false);
+  };
+
+  const handlePreviousSituation = () => {
+    if (currentSituationIndex > 0) {
+      handleSelectSituation(filteredSituations[currentSituationIndex - 1]);
+    }
+  };
+
+  const handleNextSituation = () => {
+    if (currentSituationIndex < filteredSituations.length - 1) {
+      handleSelectSituation(filteredSituations[currentSituationIndex + 1]);
+    }
   };
 
   return (
@@ -110,24 +138,46 @@ function App() {
             <div className="bg-white rounded-lg shadow-lg p-4">
               {currentSituation ? (
                 <div>
-                  <div className="mb-4">
-                    <h2 className="text-xl font-bold text-gray-900">
-                      {currentSituation.name}
-                    </h2>
-                    <p className="text-gray-600 mt-1">{currentSituation.description}</p>
-                    <div className="flex gap-2 mt-2">
-                      <span className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-full font-medium">
-                        {currentSituation.outs} {currentSituation.outs === 1 ? 'out' : 'outs'}
-                      </span>
-                      <span className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-full font-medium">
-                        {currentSituation.playType.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                      </span>
+                  <div className="mb-4 flex items-start justify-between">
+                    <div className="flex-1">
+                      <h2 className="text-xl font-bold text-gray-900">
+                        {currentSituation.name}
+                      </h2>
+                      <p className="text-gray-600 mt-1">{currentSituation.description}</p>
+                      <div className="flex gap-2 mt-2">
+                        <span className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-full font-medium">
+                          {currentSituation.outs} {currentSituation.outs === 1 ? 'out' : 'outs'}
+                        </span>
+                        <span className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-full font-medium">
+                          {currentSituation.playType.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Navigation Buttons */}
+                    <div className="flex gap-2 ml-4">
+                      <button
+                        onClick={handlePreviousSituation}
+                        disabled={currentSituationIndex <= 0}
+                        className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-md"
+                        title="Previous situation"
+                      >
+                        <ChevronLeft size={20} />
+                      </button>
+                      <button
+                        onClick={handleNextSituation}
+                        disabled={currentSituationIndex >= filteredSituations.length - 1}
+                        className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-md"
+                        title="Next situation"
+                      >
+                        <ChevronRight size={20} />
+                      </button>
                     </div>
                   </div>
                   <BaseballField
                     positions={currentSituation.positions}
                     runners={currentSituation.runners}
                     selectedPosition={selectedPosition}
+                    onSelectPosition={setSelectedPosition}
                     ballLocation={currentSituation.ballLocation}
                     playType={currentSituation.playType}
                   />

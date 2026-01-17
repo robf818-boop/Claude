@@ -5,6 +5,7 @@ interface BaseballFieldProps {
   positions?: PlayerPositions;
   runners?: BaseRunners;
   selectedPosition?: string | null;
+  onSelectPosition?: (position: string) => void;
   ballLocation?: string;
   playType?: string;
 }
@@ -13,6 +14,7 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
   positions,
   runners = { first: false, second: false, third: false },
   selectedPosition = null,
+  onSelectPosition,
   ballLocation,
   playType,
 }) => {
@@ -463,7 +465,12 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           const isSelected = selectedPosition === pos;
 
           return (
-            <g key={pos}>
+            <g 
+              key={pos} 
+              onClick={() => onSelectPosition?.(pos)}
+              className="cursor-pointer"
+              style={{ cursor: 'pointer' }}
+            >
               {/* Player circle with shadow */}
               <circle
                 cx={playerPos.x}
@@ -472,7 +479,7 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
                 fill={isSelected ? "#3b82f6" : "#ef4444"}
                 stroke={isSelected ? "#1d4ed8" : "#991b1b"}
                 strokeWidth={isSelected ? "3" : "2.5"}
-                className="cursor-pointer transition-all"
+                className="transition-all hover:opacity-80"
                 filter="url(#dropShadow)"
               />
 

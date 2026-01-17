@@ -40,8 +40,11 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
   const [scores, setScores] = useState<Record<DerbyPlayer, DerbyScoreLine>>(makeInitialState().scores);
   const [playerId, setPlayerId] = useState<DerbyPlayer | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error' | 'offline'>('offline');
+  const [batSwinging, setBatSwinging] = useState(false);
+  const [ballFlight, setBallFlight] = useState<{ id: number; variant: 'hit' | 'homer' } | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const swingTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Animation state
   const [ballPosition, setBallPosition] = useState({ y: 0, scale: 0.2 });
@@ -122,9 +125,29 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
     }, 1800);
   };
 
+  const triggerSwingAnimation = () => {
+    if (swingTimeoutRef.current) {
+      clearTimeout(swingTimeoutRef.current);
+    }
+    setBatSwinging(true);
+    swingTimeoutRef.current = setTimeout(() => {
+      setBatSwinging(false);
+    }, 320);
+  };
+
+  const triggerBallFlight = (result: SwingResult) => {
+    if (result === 'HIT' || result === 'HOME_RUN') {
+      setBallFlight({
+        id: Date.now(),
+        variant: result === 'HOME_RUN' ? 'homer' : 'hit'
+      });
+    }
+  };
+
   const advanceRoundLocal = () => {
     setBallPosition({ y: 0, scale: 0.2 });
     setPitchData(null);
+    setBallFlight(null);
 
     if (swingsTaken + 1 >= SWINGS_PER_PLAYER) {
       if (activePlayer === 'player1') {
@@ -181,6 +204,8 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
   const handleSwingLocal = () => {
     if (!pitchData || gameState !== 'hitting') return;
 
+    triggerSwingAnimation();
+
     if (strikeTimeoutRef.current) {
       clearTimeout(strikeTimeoutRef.current);
     }
@@ -222,11 +247,14 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
     }
 
     setGameState('result');
+    triggerBallFlight(result);
     resolveSwingLocal(result, timing);
   };
 
   const handleSwingOnline = () => {
     if (!pitchData || gameState !== 'hitting' || !socketRef.current) return;
+
+    triggerSwingAnimation();
 
     const swingTime = Date.now();
     const reactionTime = swingTime - pitchData.timestamp;
@@ -265,6 +293,8 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
       timing,
       message: swingMessage
     }));
+
+    triggerBallFlight(result);
   };
 
   const startPitch = () => {
@@ -292,6 +322,7 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
       setBallPosition({ y: 0, scale: 0.2 });
       setPitchData(null);
       setIsAnimating(false);
+      setBallFlight(null);
       return;
     }
 
@@ -336,6 +367,13 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
             setBallPosition({ y: 0, scale: 0.2 });
             setIsAnimating(false);
           }
+          if (payload.state.gameState !== 'result') {
+            setBallFlight(null);
+          } else if (payload.state.message?.includes('HOME RUN')) {
+            triggerBallFlight('HOME_RUN');
+          } else if (payload.state.message?.includes('HIT')) {
+            triggerBallFlight('HIT');
+          }
         }
 
         if (payload.type === 'pitch') {
@@ -375,6 +413,9 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
       if (resultTimeoutRef.current) {
         clearTimeout(resultTimeoutRef.current);
       }
+      if (swingTimeoutRef.current) {
+        clearTimeout(swingTimeoutRef.current);
+      }
     };
   }, [isLocal, roomCode, serverHost]);
 
@@ -389,11 +430,29 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
       if (resultTimeoutRef.current) {
         clearTimeout(resultTimeoutRef.current);
       }
+      if (swingTimeoutRef.current) {
+        clearTimeout(swingTimeoutRef.current);
+      }
     };
   }, []);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-orange-500 to-red-600 text-white p-4">
+      <style>{`
+        @keyframes bat-swing {
+          0% { transform: translateX(-50%) rotate(-35deg); }
+          55% { transform: translateX(-50%) rotate(25deg); }
+          100% { transform: translateX(-50%) rotate(-5deg); }
+        }
+        @keyframes ball-fly-hit {
+          0% { transform: translate(-50%, 0) scale(0.9); opacity: 1; }
+          100% { transform: translate(-220px, -140px) scale(0.7); opacity: 0; }
+        }
+        @keyframes ball-fly-homer {
+          0% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+          100% { transform: translate(260px, -320px) scale(0.6); opacity: 0; }
+        }
+      `}</style>
       <div className="absolute top-6 left-6">
         <button
           onClick={onExit}
@@ -449,6 +508,49 @@ export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGam
           }}
         />
       )}
+
+      {ballFlight && (
+        <div
+          key={ballFlight.id}
+          className="absolute w-5 h-5 bg-white rounded-full border-2 border-gray-300"
+          style={{
+            left: '50%',
+            top: '60%',
+            transform: 'translate(-50%, 0)',
+            animation: `${ballFlight.variant === 'homer' ? 'ball-fly-homer' : 'ball-fly-hit'} 900ms ease-out forwards`,
+            boxShadow: '0 4px 8px rgba(0,0,0,0.3)'
+          }}
+        />
+      )}
+
+      <div
+        className="absolute"
+        style={{
+          left: '50%',
+          top: '62%',
+          width: '12px',
+          height: '110px',
+          background: 'linear-gradient(180deg, #f97316 0%, #92400e 100%)',
+          borderRadius: '6px',
+          transformOrigin: 'bottom center',
+          transform: 'translateX(-50%) rotate(-35deg)',
+          boxShadow: '0 6px 12px rgba(0,0,0,0.35)',
+          animation: batSwinging ? 'bat-swing 320ms ease-out' : undefined
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '8px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '10px',
+            height: '28px',
+            borderRadius: '6px',
+            background: '#1f2937'
+          }}
+        />
+      </div>
 
       <div className="mt-auto mb-12 flex flex-col items-center gap-4 w-full max-w-md">
         {gameState === 'waiting' && (

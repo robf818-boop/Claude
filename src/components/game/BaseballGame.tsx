@@ -1,233 +1,370 @@
-import { useState, useEffect, useRef } from 'react';
-import { GameRole, GameState, PitchType, PitchData, SwingResult, GameScore, GameStats } from '../../types/game';
+import { useEffect, useRef, useState } from 'react';
+import { DerbyPlayer, DerbyScoreLine, DerbyState, GameState, PitchData, PitchType, SwingResult } from '../../types/game';
 
 interface BaseballGameProps {
-  role: GameRole;
   roomCode: string;
-  onGameOver?: (winner: GameRole, stats: GameStats) => void;
+  mode: 'local' | 'online';
+  onExit: () => void;
 }
 
-export function BaseballGame({ role, roomCode }: BaseballGameProps) {
+const SWINGS_PER_PLAYER = 10;
+
+const makeInitialState = (): DerbyState => ({
+  gameState: 'waiting',
+  message: 'Player 1: Tap to throw your first pitch!',
+  activePlayer: 'player1',
+  swingsTaken: 0,
+  scores: {
+    player1: { score: 0, homeRuns: 0, hits: 0, totalSwings: 0, perfectSwings: 0 },
+    player2: { score: 0, homeRuns: 0, hits: 0, totalSwings: 0, perfectSwings: 0 }
+  }
+});
+
+const playerLabels: Record<DerbyPlayer, string> = {
+  player1: 'Player 1',
+  player2: 'Player 2'
+};
+
+const getWsUrl = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.hostname}:5174`;
+};
+
+export function BaseballGame({ roomCode, mode, onExit }: BaseballGameProps) {
   const [gameState, setGameState] = useState<GameState>('waiting');
   const [pitchData, setPitchData] = useState<PitchData | null>(null);
-  const [message, setMessage] = useState('Ready?');
-  const [score, setScore] = useState<GameScore>({ pitcher: 0, batter: 0 });
-  const [stats, setStats] = useState<GameStats>({
-    homeRuns: 0,
-    fastballsHit: 0,
-    fooledCount: 0,
-    totalSwings: 0,
-    hits: 0
-  });
+  const [message, setMessage] = useState('Ready for the derby?');
+  const [activePlayer, setActivePlayer] = useState<DerbyPlayer>('player1');
+  const [swingsTaken, setSwingsTaken] = useState(0);
+  const [scores, setScores] = useState<Record<DerbyPlayer, DerbyScoreLine>>(makeInitialState().scores);
+  const [playerId, setPlayerId] = useState<DerbyPlayer | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error' | 'offline'>('offline');
+
+  const socketRef = useRef<WebSocket | null>(null);
 
   // Animation state
   const [ballPosition, setBallPosition] = useState({ y: 0, scale: 0.2 });
   const [isAnimating, setIsAnimating] = useState(false);
   const animationRef = useRef<number>();
-  const hasSwungRef = useRef(false);
   const strikeTimeoutRef = useRef<NodeJS.Timeout>();
   const resultTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Pitcher selects a pitch
-  const handlePitch = (type: PitchType) => {
-    // Clear any existing timeouts
-    if (strikeTimeoutRef.current) {
-      clearTimeout(strikeTimeoutRef.current);
-    }
-    if (resultTimeoutRef.current) {
-      clearTimeout(resultTimeoutRef.current);
-    }
-    
-    const duration = type === 'fastball' ? 600 : 1200;
-    const newPitch: PitchData = { 
-      type, 
-      timestamp: Date.now(),
-      duration 
-    };
-    
-    setPitchData(newPitch);
-    setGameState('hitting');
-    setMessage(`${type.toUpperCase()} incoming!`);
-    hasSwungRef.current = false;
-    
-    // Start pitch animation
-    startPitchAnimation(duration);
-    
-    // In a real app, emit to socket: socket.emit('throw_pitch', { roomID, type, duration, timestamp })
-    
-    // Auto-strike after animation completes if batter didn't swing
-    strikeTimeoutRef.current = setTimeout(() => {
-      if (!hasSwungRef.current) {
-        setGameState('result');
-        setMessage('STRIKE! No swing.');
-        setScore(prev => ({ ...prev, pitcher: prev.pitcher + 1 }));
-        resultTimeoutRef.current = setTimeout(() => resetRound(), 2000);
-      }
-    }, duration + 100);
-  };
+  const isLocal = mode === 'local';
+  const isActivePlayer = isLocal || playerId === activePlayer;
 
-  // Batter reacts to incoming pitch
-  const handleSwing = () => {
-    if (!pitchData || gameState !== 'hitting') return;
-    
-    hasSwungRef.current = true;
-    
-    // Clear the strike timeout since batter swung
-    if (strikeTimeoutRef.current) {
-      clearTimeout(strikeTimeoutRef.current);
-    }
-    if (resultTimeoutRef.current) {
-      clearTimeout(resultTimeoutRef.current);
-    }
-    
-    const swingTime = Date.now();
-    const reactionTime = swingTime - pitchData.timestamp;
-    
-    setStats(prev => ({ ...prev, totalSwings: prev.totalSwings + 1 }));
-    
-    // Timing windows based on pitch type
-    const perfectWindow = pitchData.type === 'fastball' 
-      ? { min: 400, max: 600 } 
-      : { min: 800, max: 1000 };
-    
-    const goodWindow = pitchData.type === 'fastball'
-      ? { min: 350, max: 650 }
-      : { min: 700, max: 1100 };
-    
-    let result: SwingResult;
-    let timing: string;
-    
-    if (reactionTime >= perfectWindow.min && reactionTime <= perfectWindow.max) {
-      result = 'HOME_RUN';
-      timing = 'perfect';
-      setMessage('🚀 HOME RUN!');
-      setScore(prev => ({ ...prev, batter: prev.batter + 3 }));
-      setStats(prev => ({
-        ...prev,
-        homeRuns: prev.homeRuns + 1,
-        hits: prev.hits + 1,
-        fastballsHit: pitchData.type === 'fastball' ? prev.fastballsHit + 1 : prev.fastballsHit
-      }));
-      triggerHomeRunEffects();
-    } else if (reactionTime >= goodWindow.min && reactionTime <= goodWindow.max) {
-      result = 'HIT';
-      timing = 'good';
-      setMessage('BASE HIT!');
-      setScore(prev => ({ ...prev, batter: prev.batter + 1 }));
-      setStats(prev => ({
-        ...prev,
-        hits: prev.hits + 1,
-        fastballsHit: pitchData.type === 'fastball' ? prev.fastballsHit + 1 : prev.fastballsHit
-      }));
-    } else if (reactionTime < goodWindow.min) {
-      result = 'WHIFF';
-      timing = 'early';
-      setMessage('TOO EARLY! Whiff!');
-      setScore(prev => ({ ...prev, pitcher: prev.pitcher + 1 }));
-      if (pitchData.type === 'changeup') {
-        setStats(prev => ({ ...prev, fooledCount: prev.fooledCount + 1 }));
-      }
-    } else {
-      result = 'STRIKE';
-      timing = 'late';
-      setMessage('TOO LATE! Strike!');
-      setScore(prev => ({ ...prev, pitcher: prev.pitcher + 1 }));
-    }
-    
-    setGameState('result');
-    
-    // In a real app: socket.emit('swing_result', { roomID, result, timing })
-    console.log('Swing result:', result, 'Timing:', timing);
-    
-    resultTimeoutRef.current = setTimeout(() => resetRound(), 2000);
+  const applyState = (state: DerbyState) => {
+    setGameState(state.gameState);
+    setMessage(state.message);
+    setActivePlayer(state.activePlayer);
+    setSwingsTaken(state.swingsTaken);
+    setScores(state.scores);
   };
 
   const startPitchAnimation = (duration: number) => {
     setIsAnimating(true);
     setBallPosition({ y: 0, scale: 0.2 });
-    
+
     const startTime = Date.now();
     const animate = () => {
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
-      
-      // Ease out quad
       const easeProgress = 1 - Math.pow(1 - progress, 2);
-      
+
       setBallPosition({
-        y: easeProgress * 60, // 60vh travel
-        scale: 0.2 + (easeProgress * 2.8) // Scale from 0.2 to 3
+        y: easeProgress * 60,
+        scale: 0.2 + (easeProgress * 2.8)
       });
-      
+
       if (progress < 1) {
         animationRef.current = requestAnimationFrame(animate);
       } else {
         setIsAnimating(false);
       }
     };
-    
+
     animationRef.current = requestAnimationFrame(animate);
   };
 
   const triggerHomeRunEffects = () => {
-    // Vibration if supported
     if ('vibrate' in navigator) {
       navigator.vibrate([100, 50, 100, 50, 100]);
     }
-    
-    // Could add audio here
-    // const audio = new Audio('/sounds/crack.mp3');
-    // audio.play();
   };
 
-  const resetGame = () => {
-    // Clear all active timeouts and animations
+  const resolveSwingLocal = (result: SwingResult, timing: string) => {
+    setScores(prev => {
+      const current = prev[activePlayer];
+      const next = { ...current, totalSwings: current.totalSwings + 1 };
+
+      if (result === 'HOME_RUN') {
+        next.score += 3;
+        next.homeRuns += 1;
+        next.hits += 1;
+        next.perfectSwings += 1;
+      } else if (result === 'HIT') {
+        next.score += 1;
+        next.hits += 1;
+      } else if (timing === 'perfect') {
+        next.perfectSwings += 1;
+      }
+
+      return {
+        ...prev,
+        [activePlayer]: next
+      };
+    });
+
+    setSwingsTaken(prev => prev + 1);
+
+    resultTimeoutRef.current = setTimeout(() => {
+      advanceRoundLocal();
+    }, 1800);
+  };
+
+  const advanceRoundLocal = () => {
+    setBallPosition({ y: 0, scale: 0.2 });
+    setPitchData(null);
+
+    if (swingsTaken + 1 >= SWINGS_PER_PLAYER) {
+      if (activePlayer === 'player1') {
+        setGameState('betweenPlayers');
+        setMessage('Player 2 up next!');
+        setActivePlayer('player2');
+        setSwingsTaken(0);
+      } else {
+        setGameState('gameOver');
+        const winner = scores.player1.score === scores.player2.score
+          ? 'TIE GAME!'
+          : scores.player1.score > scores.player2.score
+            ? 'PLAYER 1 WINS!'
+            : 'PLAYER 2 WINS!';
+        setMessage(winner);
+      }
+    } else {
+      setGameState('waiting');
+      setMessage('Tap to throw the next pitch!');
+    }
+  };
+
+  const startPitchLocal = () => {
+    if (gameState !== 'waiting') return;
+
     if (strikeTimeoutRef.current) {
       clearTimeout(strikeTimeoutRef.current);
     }
     if (resultTimeoutRef.current) {
       clearTimeout(resultTimeoutRef.current);
     }
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-    }
-    
-    setScore({ pitcher: 0, batter: 0 });
-    setStats({
-      homeRuns: 0,
-      fastballsHit: 0,
-      fooledCount: 0,
-      totalSwings: 0,
-      hits: 0
-    });
-    setPitchData(null);
-    setBallPosition({ y: 0, scale: 0.2 });
-    setIsAnimating(false);
-    setGameState(role === 'pitcher' ? 'pitching' : 'waiting');
-    setMessage(role === 'pitcher' ? 'Select your pitch' : 'Waiting for pitch...');
+
+    const type: PitchType = Math.random() > 0.6 ? 'changeup' : 'fastball';
+    const duration = type === 'fastball' ? 650 : 1150;
+    const newPitch: PitchData = {
+      type,
+      timestamp: Date.now(),
+      duration
+    };
+
+    setPitchData(newPitch);
+    setGameState('hitting');
+    setMessage(type === 'fastball' ? '🔥 FASTBALL!' : '🌙 CHANGEUP!');
+
+    startPitchAnimation(duration);
+
+    strikeTimeoutRef.current = setTimeout(() => {
+      setGameState('result');
+      setMessage('Strike! No swing.');
+      resolveSwingLocal('STRIKE', 'late');
+    }, duration + 150);
   };
 
-  const resetRound = () => {
-    setGameState(role === 'pitcher' ? 'pitching' : 'waiting');
-    setPitchData(null);
-    setMessage(role === 'pitcher' ? 'Select your pitch' : 'Wait for pitch...');
-    setBallPosition({ y: 0, scale: 0.2 });
-    
-    // Check for game over (first to 10 points)
-    if (score.pitcher >= 10 || score.batter >= 10) {
-      setGameState('gameOver');
-      const winner = score.pitcher > score.batter ? 'pitcher' : 'batter';
-      setMessage(`Game Over! ${winner.toUpperCase()} WINS!`);
+  const handleSwingLocal = () => {
+    if (!pitchData || gameState !== 'hitting') return;
+
+    if (strikeTimeoutRef.current) {
+      clearTimeout(strikeTimeoutRef.current);
     }
+    if (resultTimeoutRef.current) {
+      clearTimeout(resultTimeoutRef.current);
+    }
+
+    const swingTime = Date.now();
+    const reactionTime = swingTime - pitchData.timestamp;
+
+    const perfectWindow = pitchData.type === 'fastball'
+      ? { min: 420, max: 620 }
+      : { min: 820, max: 1040 };
+
+    const goodWindow = pitchData.type === 'fastball'
+      ? { min: 360, max: 680 }
+      : { min: 740, max: 1120 };
+
+    let result: SwingResult = 'STRIKE';
+    let timing = 'late';
+
+    if (reactionTime >= perfectWindow.min && reactionTime <= perfectWindow.max) {
+      result = 'HOME_RUN';
+      timing = 'perfect';
+      setMessage('🚀 HOME RUN!!!');
+      triggerHomeRunEffects();
+    } else if (reactionTime >= goodWindow.min && reactionTime <= goodWindow.max) {
+      result = 'HIT';
+      timing = 'good';
+      setMessage('BASE HIT!');
+    } else if (reactionTime < goodWindow.min) {
+      result = 'WHIFF';
+      timing = 'early';
+      setMessage('Too early!');
+    } else {
+      result = 'STRIKE';
+      timing = 'late';
+      setMessage('Too late!');
+    }
+
+    setGameState('result');
+    resolveSwingLocal(result, timing);
   };
+
+  const handleSwingOnline = () => {
+    if (!pitchData || gameState !== 'hitting' || !socketRef.current) return;
+
+    const swingTime = Date.now();
+    const reactionTime = swingTime - pitchData.timestamp;
+
+    const perfectWindow = pitchData.type === 'fastball'
+      ? { min: 420, max: 620 }
+      : { min: 820, max: 1040 };
+
+    const goodWindow = pitchData.type === 'fastball'
+      ? { min: 360, max: 680 }
+      : { min: 740, max: 1120 };
+
+    let result: SwingResult = 'STRIKE';
+    let timing = 'late';
+    let swingMessage = 'Too late!';
+
+    if (reactionTime >= perfectWindow.min && reactionTime <= perfectWindow.max) {
+      result = 'HOME_RUN';
+      timing = 'perfect';
+      swingMessage = '🚀 HOME RUN!!!';
+      triggerHomeRunEffects();
+    } else if (reactionTime >= goodWindow.min && reactionTime <= goodWindow.max) {
+      result = 'HIT';
+      timing = 'good';
+      swingMessage = 'BASE HIT!';
+    } else if (reactionTime < goodWindow.min) {
+      result = 'WHIFF';
+      timing = 'early';
+      swingMessage = 'Too early!';
+    }
+
+    socketRef.current.send(JSON.stringify({
+      type: 'swing',
+      roomCode,
+      result,
+      timing,
+      message: swingMessage
+    }));
+  };
+
+  const startPitch = () => {
+    if (isLocal) {
+      startPitchLocal();
+      return;
+    }
+
+    if (!socketRef.current || gameState !== 'waiting') return;
+    socketRef.current.send(JSON.stringify({ type: 'startPitch', roomCode }));
+  };
+
+  const handleSwing = () => {
+    if (isLocal) {
+      handleSwingLocal();
+      return;
+    }
+
+    handleSwingOnline();
+  };
+
+  const handleReset = () => {
+    if (isLocal) {
+      applyState(makeInitialState());
+      setBallPosition({ y: 0, scale: 0.2 });
+      setPitchData(null);
+      setIsAnimating(false);
+      return;
+    }
+
+    socketRef.current?.send(JSON.stringify({ type: 'reset', roomCode }));
+  };
+
+  const handleReadyNextPlayer = () => {
+    if (isLocal) {
+      setGameState('waiting');
+      setMessage(`${playerLabels[activePlayer]}: Tap to throw your first pitch!`);
+      return;
+    }
+
+    socketRef.current?.send(JSON.stringify({ type: 'ready', roomCode }));
+  };
+
+  const activeScore = scores[activePlayer];
 
   useEffect(() => {
-    // Initialize game state based on role
-    setGameState(role === 'pitcher' ? 'pitching' : 'waiting');
-    setMessage(role === 'pitcher' ? 'Select your pitch' : 'Waiting for pitch...');
-    
+    if (!isLocal) {
+      setConnectionStatus('connecting');
+      const socket = new WebSocket(getWsUrl());
+      socketRef.current = socket;
+
+      socket.addEventListener('open', () => {
+        setConnectionStatus('connected');
+        socket.send(JSON.stringify({ type: 'join', roomCode }));
+      });
+
+      socket.addEventListener('message', event => {
+        const payload = JSON.parse(event.data);
+
+        if (payload.type === 'joined') {
+          setPlayerId(payload.playerId as DerbyPlayer);
+          applyState(payload.state as DerbyState);
+        }
+
+        if (payload.type === 'state') {
+          applyState(payload.state as DerbyState);
+          if (payload.state.gameState !== 'hitting') {
+            setPitchData(null);
+            setBallPosition({ y: 0, scale: 0.2 });
+            setIsAnimating(false);
+          }
+        }
+
+        if (payload.type === 'pitch') {
+          const pitch = payload.pitch as PitchData;
+          setPitchData(pitch);
+          startPitchAnimation(pitch.duration);
+        }
+
+        if (payload.type === 'error') {
+          setConnectionStatus('error');
+          setMessage(payload.message || 'Unable to join room.');
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        setConnectionStatus('offline');
+      });
+
+      socket.addEventListener('error', () => {
+        setConnectionStatus('error');
+      });
+
+      return () => {
+        socket.close();
+      };
+    }
+
+    applyState(makeInitialState());
+
     return () => {
-      // Clean up all timers and animation frames
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
@@ -238,40 +375,70 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
         clearTimeout(resultTimeoutRef.current);
       }
     };
-  }, [role]);
+  }, [isLocal, roomCode]);
+
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      if (strikeTimeoutRef.current) {
+        clearTimeout(strikeTimeoutRef.current);
+      }
+      if (resultTimeoutRef.current) {
+        clearTimeout(resultTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-green-700 to-green-900 text-white p-4">
-      {/* Scoreboard */}
-      <div className="absolute top-8 left-1/2 transform -translate-x-1/2 bg-gray-900 rounded-xl p-6 border-4 border-yellow-500 shadow-2xl min-w-[300px]">
-        <div className="flex justify-around items-center gap-8">
-          <div className="text-center">
-            <div className="text-xs text-gray-400 font-bold mb-1">PITCHER</div>
-            <div className="text-4xl font-bold text-white">{score.pitcher}</div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-orange-500 to-red-600 text-white p-4">
+      <div className="absolute top-6 left-6">
+        <button
+          onClick={onExit}
+          className="bg-white text-orange-600 font-bold py-2 px-4 rounded-lg shadow-lg hover:bg-orange-100"
+        >
+          ← Back
+        </button>
+      </div>
+
+      <div className="text-center mb-4">
+        <div className="text-sm uppercase tracking-widest text-orange-100">Home Run Derby</div>
+        <div className="text-xs text-orange-200 mt-1">Room: {roomCode}</div>
+        {mode === 'online' && (
+          <div className="text-xs text-orange-200 mt-1">
+            Status: {connectionStatus}
           </div>
-          <div className="w-1 h-12 bg-gray-700"></div>
+        )}
+      </div>
+
+      <div className="bg-black bg-opacity-50 rounded-2xl px-6 py-4 mb-6 min-w-[320px]">
+        <div className="flex justify-between items-center gap-6">
           <div className="text-center">
-            <div className="text-xs text-gray-400 font-bold mb-1">BATTER</div>
-            <div className="text-4xl font-bold text-white">{score.batter}</div>
+            <div className="text-xs text-orange-200 font-bold">PLAYER 1</div>
+            <div className="text-4xl font-bold">{scores.player1.score}</div>
+            <div className="text-xs text-orange-200">HR: {scores.player1.homeRuns}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-orange-200 font-bold">PLAYER 2</div>
+            <div className="text-4xl font-bold">{scores.player2.score}</div>
+            <div className="text-xs text-orange-200">HR: {scores.player2.homeRuns}</div>
           </div>
         </div>
       </div>
 
-      {/* Role indicator */}
-      <div className="absolute top-40 text-center">
-        <div className="text-sm text-green-300 mb-2">YOUR ROLE</div>
-        <div className="text-3xl font-bold uppercase">{role}</div>
-        <div className="text-sm text-gray-300 mt-1">Room: {roomCode}</div>
+      <div className="text-3xl font-bold text-center mb-4 drop-shadow-lg">{message}</div>
+
+      <div className="text-sm text-orange-100 mb-8">
+        {gameState !== 'gameOver' && (
+          <span>
+            {playerLabels[activePlayer]} • Swing {swingsTaken + 1} of {SWINGS_PER_PLAYER}
+          </span>
+        )}
       </div>
 
-      {/* Status Message */}
-      <div className="text-4xl font-bold text-center mb-8 mt-48 drop-shadow-lg">
-        {message}
-      </div>
-
-      {/* Baseball */}
       {(isAnimating || gameState === 'hitting') && (
-        <div 
+        <div
           className="absolute w-10 h-10 bg-white rounded-full border-2 border-gray-300 transition-all duration-75"
           style={{
             top: `${20 + ballPosition.y}vh`,
@@ -282,70 +449,72 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
         />
       )}
 
-      {/* Controls */}
       <div className="mt-auto mb-12 flex flex-col items-center gap-4 w-full max-w-md">
-        {role === 'pitcher' && gameState === 'pitching' && (
-          <div className="flex gap-4 w-full">
-            <button
-              onClick={() => handlePitch('fastball')}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-6 px-8 rounded-xl text-xl shadow-lg transform hover:scale-105 transition-all"
-            >
-              🔥 FASTBALL
-            </button>
-            <button
-              onClick={() => handlePitch('changeup')}
-              className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-6 px-8 rounded-xl text-xl shadow-lg transform hover:scale-105 transition-all"
-            >
-              🌙 CHANGEUP
-            </button>
-          </div>
+        {gameState === 'waiting' && (
+          <button
+            onClick={startPitch}
+            disabled={!isActivePlayer}
+            className={`w-full font-bold py-6 px-12 rounded-xl text-2xl shadow-lg transform transition-all ${
+              isActivePlayer
+                ? 'bg-white text-orange-600 hover:scale-105'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            🎯 Throw Pitch
+          </button>
         )}
 
-        {role === 'batter' && gameState === 'hitting' && (
+        {gameState === 'hitting' && (
           <button
             onClick={handleSwing}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-8 px-12 rounded-xl text-2xl shadow-lg transform hover:scale-105 transition-all animate-pulse"
+            disabled={!isActivePlayer}
+            className={`w-full font-bold py-8 px-12 rounded-xl text-3xl shadow-lg transform transition-all ${
+              isActivePlayer
+                ? 'bg-yellow-300 hover:bg-yellow-400 text-gray-900 hover:scale-105 animate-pulse'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
           >
             ⚾ SWING!
           </button>
         )}
 
-        {gameState === 'waiting' && role === 'batter' && (
-          <div className="text-center text-gray-300">
-            <div className="animate-pulse">Waiting for pitcher...</div>
-          </div>
+        {gameState === 'betweenPlayers' && (
+          <button
+            onClick={handleReadyNextPlayer}
+            disabled={!isActivePlayer}
+            className={`w-full font-bold py-6 px-12 rounded-xl text-2xl shadow-lg transform transition-all ${
+              isActivePlayer
+                ? 'bg-white text-purple-700 hover:scale-105'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            🙌 {playerLabels[activePlayer]} Start
+          </button>
         )}
       </div>
 
-      {/* Stats */}
       {gameState !== 'gameOver' && (
         <div className="absolute bottom-4 right-4 bg-black bg-opacity-50 rounded-lg p-3 text-xs">
-          <div className="font-bold mb-2">STATS</div>
-          <div>Home Runs: {stats.homeRuns}</div>
-          <div>Hits: {stats.hits}/{stats.totalSwings}</div>
-          <div>Fastballs Hit: {stats.fastballsHit}</div>
-          {role === 'pitcher' && <div>Fooled: {stats.fooledCount}</div>}
+          <div className="font-bold mb-2">DERBY STATS</div>
+          <div>Hits: {activeScore.hits}/{activeScore.totalSwings}</div>
+          <div>Perfect Swings: {activeScore.perfectSwings}</div>
         </div>
       )}
 
-      {/* Game Over */}
       {gameState === 'gameOver' && (
         <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center">
           <div className="bg-white text-gray-900 rounded-2xl p-8 max-w-md text-center shadow-2xl">
             <div className="text-6xl mb-4">🏆</div>
-            <div className="text-3xl font-bold mb-4">
-              {score.pitcher > score.batter ? 'PITCHER' : 'BATTER'} WINS!
-            </div>
+            <div className="text-3xl font-bold mb-4">{message}</div>
             <div className="border-t border-gray-300 pt-4 mb-4 text-left">
-              <div className="font-bold mb-2">Final Stats:</div>
-              <div>Home Runs: {stats.homeRuns}</div>
-              <div>Total Hits: {stats.hits}</div>
-              <div>Hit Rate: {stats.totalSwings > 0 ? Math.round((stats.hits / stats.totalSwings) * 100) : 0}%</div>
-              <div>Fastballs Hit: {stats.fastballsHit}</div>
-              <div>Times Fooled: {stats.fooledCount}</div>
+              <div className="font-bold mb-2">Final Derby Stats</div>
+              <div>Player 1 HRs: {scores.player1.homeRuns}</div>
+              <div>Player 1 Score: {scores.player1.score}</div>
+              <div className="mt-2">Player 2 HRs: {scores.player2.homeRuns}</div>
+              <div>Player 2 Score: {scores.player2.score}</div>
             </div>
             <button
-              onClick={resetGame}
+              onClick={handleReset}
               className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg"
             >
               PLAY AGAIN

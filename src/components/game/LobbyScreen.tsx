@@ -2,9 +2,13 @@ import { useState } from 'react';
 
 interface LobbyScreenProps {
   onJoinRoom: (roomCode: string) => void;
+  onStartLocal: () => void;
+  onCreateRoom: (roomCode: string) => void;
 }
 
-export function LobbyScreen({ onJoinRoom }: LobbyScreenProps) {
+const generateRoomCode = () => String(Math.floor(1000 + Math.random() * 9000));
+
+export function LobbyScreen({ onJoinRoom, onStartLocal, onCreateRoom }: LobbyScreenProps) {
   const [code, setCode] = useState('');
 
   const pressNumber = (num: number) => {
@@ -23,23 +27,56 @@ export function LobbyScreen({ onJoinRoom }: LobbyScreenProps) {
     }
   };
 
+  const handleCreateRoom = () => {
+    const roomCode = generateRoomCode();
+    setCode(roomCode);
+    onCreateRoom(roomCode);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
       <div className="max-w-md w-full">
         <h1 className="text-4xl font-bold text-white text-center mb-8">
-          ⚾ Baseball Game
+          ⚾ Home Run Derby
         </h1>
-        
+
         <div className="bg-white rounded-2xl p-8 shadow-2xl">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
-            Enter Room Code
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">
+            Play with a Friend Online
           </h2>
-          
+          <p className="text-sm text-gray-600 text-center mb-4">
+            Create a room, share the 4-digit code, and both players join.
+          </p>
+
+          <div className="flex gap-3 mb-6">
+            <button
+              onClick={handleCreateRoom}
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-all"
+            >
+              Create Room
+            </button>
+            <button
+              onClick={handleGo}
+              disabled={code.length !== 4}
+              className={`flex-1 font-bold rounded-lg transition-all ${
+                code.length === 4
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Join Room
+            </button>
+          </div>
+
+          <h3 className="text-lg font-bold text-gray-900 mb-4 text-center">
+            Enter Room Code
+          </h3>
+
           {/* Code Display Boxes */}
-          <div className="flex justify-center gap-3 mb-8">
+          <div className="flex justify-center gap-3 mb-6">
             {[0, 1, 2, 3].map(i => (
-              <div 
-                key={i} 
+              <div
+                key={i}
                 className="w-16 h-20 bg-gray-100 border-2 border-gray-300 rounded-xl flex items-center justify-center"
               >
                 <span className="text-4xl font-bold text-gray-800">
@@ -92,19 +129,19 @@ export function LobbyScreen({ onJoinRoom }: LobbyScreenProps) {
           {/* Quick Join Option */}
           <div className="mt-6 pt-6 border-t border-gray-200">
             <p className="text-sm text-gray-600 text-center mb-3">
-              Quick Play (Single Player)
+              Pass & Play on one device
             </p>
             <button
-              onClick={() => onJoinRoom('SOLO')}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition-all"
+              onClick={onStartLocal}
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition-all"
             >
-              Play Solo Mode
+              Start Pass-and-Play
             </button>
           </div>
         </div>
 
         <p className="text-center text-white text-sm mt-4 opacity-75">
-          Enter a 4-digit room code to join a friend, or play solo to practice!
+          Make sure both devices are on the same network and the derby server is running.
         </p>
       </div>
     </div>

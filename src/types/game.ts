@@ -1,8 +1,8 @@
 // Game types for the baseball pitching/batting game
 
-export type GameRole = 'pitcher' | 'batter';
+export type DerbyPlayer = 'player1' | 'player2';
 
-export type GameState = 'waiting' | 'lobby' | 'pitching' | 'hitting' | 'result' | 'gameOver';
+export type GameState = 'waiting' | 'lobby' | 'pitching' | 'hitting' | 'result' | 'betweenPlayers' | 'gameOver';
 
 export type PitchType = 'fastball' | 'changeup';
 
@@ -21,16 +21,27 @@ export interface SwingData {
 }
 
 export interface GameScore {
-  pitcher: number;
-  batter: number;
+  player1: number;
+  player2: number;
 }
 
 export interface GameStats {
   homeRuns: number;
-  fastballsHit: number;
-  fooledCount: number;
-  totalSwings: number;
   hits: number;
+  totalSwings: number;
+  perfectSwings: number;
+}
+
+export interface DerbyScoreLine extends GameStats {
+  score: number;
+}
+
+export interface DerbyState {
+  gameState: GameState;
+  message: string;
+  activePlayer: DerbyPlayer;
+  swingsTaken: number;
+  scores: Record<DerbyPlayer, DerbyScoreLine>;
 }
 
 export interface RoomData {
@@ -46,13 +57,13 @@ export interface SocketEvents {
   join_game: (roomCode: string) => void;
   throw_pitch: (data: { roomID: string; type: PitchType; duration: number; timestamp: number }) => void;
   swing_result: (data: { roomID: string; result: SwingResult; timing: string }) => void;
-  update_score: (data: { roomID: string; player: GameRole }) => void;
+  update_score: (data: { roomID: string; player: DerbyPlayer }) => void;
   
   // Server to Client
-  assign_role: (role: GameRole) => void;
+  assign_role: (role: DerbyPlayer) => void;
   game_start: () => void;
   incoming_pitch: (data: PitchData & { roomID: string }) => void;
   game_update: (data: { result: SwingResult; timing: string; score: GameScore }) => void;
   score_updated: (score: GameScore) => void;
-  game_over: (winner: GameRole) => void;
+  game_over: (winner: DerbyPlayer) => void;
 }

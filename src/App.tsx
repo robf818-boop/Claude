@@ -69,7 +69,7 @@ function App() {
               className="bg-white hover:bg-gray-100 text-blue-600 font-bold py-3 px-6 rounded-lg shadow-lg flex items-center gap-2 transition-all transform hover:scale-105"
             >
               <Gamepad2 size={24} />
-              <span>Play Pitch/Hit Game</span>
+              <span>Play Home Run Derby</span>
             </button>
           </div>
         </div>

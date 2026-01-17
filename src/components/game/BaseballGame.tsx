@@ -4,6 +4,7 @@ import { DerbyPlayer, DerbyScoreLine, DerbyState, GameState, PitchData, PitchTyp
 interface BaseballGameProps {
   roomCode: string;
   mode: 'local' | 'online';
+  serverHost: string;
   onExit: () => void;
 }
 
@@ -25,12 +26,12 @@ const playerLabels: Record<DerbyPlayer, string> = {
   player2: 'Player 2'
 };
 
-const getWsUrl = () => {
+const getWsUrl = (host: string) => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${protocol}://${window.location.hostname}:5174`;
+  return `${protocol}://${host}:5174`;
 };
 
-export function BaseballGame({ roomCode, mode, onExit }: BaseballGameProps) {
+export function BaseballGame({ roomCode, mode, serverHost, onExit }: BaseballGameProps) {
   const [gameState, setGameState] = useState<GameState>('waiting');
   const [pitchData, setPitchData] = useState<PitchData | null>(null);
   const [message, setMessage] = useState('Ready for the derby?');
@@ -312,7 +313,7 @@ export function BaseballGame({ roomCode, mode, onExit }: BaseballGameProps) {
   useEffect(() => {
     if (!isLocal) {
       setConnectionStatus('connecting');
-      const socket = new WebSocket(getWsUrl());
+      const socket = new WebSocket(getWsUrl(serverHost));
       socketRef.current = socket;
 
       socket.addEventListener('open', () => {
@@ -375,7 +376,7 @@ export function BaseballGame({ roomCode, mode, onExit }: BaseballGameProps) {
         clearTimeout(resultTimeoutRef.current);
       }
     };
-  }, [isLocal, roomCode]);
+  }, [isLocal, roomCode, serverHost]);
 
   useEffect(() => {
     return () => {

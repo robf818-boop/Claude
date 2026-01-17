@@ -4,11 +4,19 @@ interface LobbyScreenProps {
   onJoinRoom: (roomCode: string) => void;
   onStartLocal: () => void;
   onCreateRoom: (roomCode: string) => void;
+  serverHost: string;
+  onServerHostChange: (nextHost: string) => void;
 }
 
 const generateRoomCode = () => String(Math.floor(1000 + Math.random() * 9000));
 
-export function LobbyScreen({ onJoinRoom, onStartLocal, onCreateRoom }: LobbyScreenProps) {
+export function LobbyScreen({
+  onJoinRoom,
+  onStartLocal,
+  onCreateRoom,
+  serverHost,
+  onServerHostChange
+}: LobbyScreenProps) {
   const [code, setCode] = useState('');
 
   const pressNumber = (num: number) => {
@@ -47,6 +55,21 @@ export function LobbyScreen({ onJoinRoom, onStartLocal, onCreateRoom }: LobbyScr
           <p className="text-sm text-gray-600 text-center mb-4">
             Create a room, share the 4-digit code, and both players join.
           </p>
+
+          <div className="mb-6">
+            <label className="block text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
+              Derby Server Address
+            </label>
+            <input
+              value={serverHost}
+              onChange={event => onServerHostChange(event.target.value)}
+              placeholder="e.g. 192.168.1.42"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+            <p className="mt-2 text-xs text-gray-500">
+              Use the host device's IP address so other phones can join.
+            </p>
+          </div>
 
           <div className="flex gap-3 mb-6">
             <button

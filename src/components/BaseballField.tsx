@@ -119,6 +119,18 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
         <rect x="0" y="0" width={viewBox} height={viewBox} fill="url(#grassGradient)" />
         <rect x="0" y="0" width={viewBox} height={viewBox} fill="url(#mowingStripes)" opacity="0.3" />
 
+        {/* Foul territory grass */}
+        <path
+          d={`
+            M 0 ${viewBox}
+            L ${home.x} ${home.y + 55}
+            L ${viewBox} ${viewBox}
+            Z
+          `}
+          fill="#1c3b2a"
+          opacity="0.45"
+        />
+
         {/* Outfield fence */}
         <path
           d={`
@@ -152,6 +164,26 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           `}
           fill="#3d6b1f"
           opacity="0.3"
+        />
+
+        {/* Infield grass cutout */}
+        <path
+          d={`
+            M ${home.x} ${home.y + 55}
+            Q ${home.x - 35} ${home.y + 30} ${home.x - 60} ${home.y - 5}
+            Q ${home.x - 70} ${home.y - 20} ${third.x - 55} ${third.y - 40}
+            Q ${third.x - 30} ${third.y - 55} ${third.x - 10} ${third.y - 65}
+            Q ${third.x + 10} ${third.y - 72} ${second.x - 55} ${second.y - 30}
+            L ${second.x} ${second.y - 65}
+            L ${second.x + 55} ${second.y - 30}
+            Q ${first.x - 10} ${first.y - 72} ${first.x + 10} ${first.y - 65}
+            Q ${first.x + 30} ${first.y - 55} ${first.x + 55} ${first.y - 40}
+            Q ${home.x + 70} ${home.y - 20} ${home.x + 60} ${home.y - 5}
+            Q ${home.x + 35} ${home.y + 30} ${home.x} ${home.y + 55}
+            Z
+          `}
+          fill="#1f6a33"
+          opacity="0.4"
         />
 
         {/* Infield dirt - perfect diamond with rounded edges */}
@@ -226,6 +258,15 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           r="3"
           fill="#8b7355"
         />
+        <rect
+          x={pitcher.x - 6}
+          y={pitcher.y - 2}
+          width="12"
+          height="4"
+          rx="1"
+          fill="#f5f5f5"
+          opacity="0.8"
+        />
 
         {/* Foul lines - more prominent */}
         <line
@@ -245,6 +286,24 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           stroke="#ffffff"
           strokeWidth="3"
           opacity="0.9"
+        />
+
+        {/* Foul poles */}
+        <line
+          x1={third.x - 110}
+          y1={third.y + 190}
+          x2={third.x - 110}
+          y2={third.y + 60}
+          stroke="#fbbf24"
+          strokeWidth="3"
+        />
+        <line
+          x1={first.x + 110}
+          y1={first.y + 190}
+          x2={first.x + 110}
+          y2={first.y + 60}
+          stroke="#fbbf24"
+          strokeWidth="3"
         />
 
         {/* Base paths */}

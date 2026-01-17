@@ -469,7 +469,6 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
               key={pos} 
               onClick={() => onSelectPosition?.(pos)}
               className="cursor-pointer"
-              style={{ cursor: 'pointer' }}
             >
               {/* Player circle with shadow */}
               <circle

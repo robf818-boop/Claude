@@ -25,6 +25,8 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
   const [isAnimating, setIsAnimating] = useState(false);
   const animationRef = useRef<number>();
   const hasSwungRef = useRef(false);
+  const strikeTimeoutRef = useRef<NodeJS.Timeout>();
+  const resultTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Pitcher selects a pitch
   const handlePitch = (type: PitchType) => {
@@ -46,12 +48,12 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     // In a real app, emit to socket: socket.emit('throw_pitch', { roomID, type, duration, timestamp })
     
     // Auto-strike after animation completes if batter didn't swing
-    setTimeout(() => {
+    strikeTimeoutRef.current = setTimeout(() => {
       if (!hasSwungRef.current) {
         setGameState('result');
         setMessage('STRIKE! No swing.');
         setScore(prev => ({ ...prev, pitcher: prev.pitcher + 1 }));
-        setTimeout(() => resetRound(), 2000);
+        resultTimeoutRef.current = setTimeout(() => resetRound(), 2000);
       }
     }, duration + 100);
   };
@@ -120,7 +122,7 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     // In a real app: socket.emit('swing_result', { roomID, result, timing })
     console.log('Swing result:', result, 'Timing:', timing);
     
-    setTimeout(() => resetRound(), 2000);
+    resultTimeoutRef.current = setTimeout(() => resetRound(), 2000);
   };
 
   const startPitchAnimation = (duration: number) => {
@@ -196,8 +198,15 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     setMessage(role === 'pitcher' ? 'Select your pitch' : 'Waiting for pitch...');
     
     return () => {
+      // Clean up all timers and animation frames
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
+      }
+      if (strikeTimeoutRef.current) {
+        clearTimeout(strikeTimeoutRef.current);
+      }
+      if (resultTimeoutRef.current) {
+        clearTimeout(resultTimeoutRef.current);
       }
     };
   }, [role]);

@@ -7,8 +7,8 @@ interface LobbyScreenProps {
 export function LobbyScreen({ onJoinRoom }: LobbyScreenProps) {
   const [code, setCode] = useState('');
 
-  const pressNumber = (num: number | string) => {
-    if (code.length < 4 && typeof num === 'number') {
+  const pressNumber = (num: number) => {
+    if (code.length < 4) {
       setCode(prev => prev + num);
     }
   };

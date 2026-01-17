@@ -52,7 +52,7 @@ export interface SocketEvents {
   assign_role: (role: GameRole) => void;
   game_start: () => void;
   incoming_pitch: (data: PitchData & { roomID: string }) => void;
-  game_update: (data: { result: SwingResult; [key: string]: any }) => void;
+  game_update: (data: { result: SwingResult; timing: string; score: GameScore }) => void;
   score_updated: (score: GameScore) => void;
   game_over: (winner: GameRole) => void;
 }

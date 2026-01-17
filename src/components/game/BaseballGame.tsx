@@ -24,6 +24,7 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
   const [ballPosition, setBallPosition] = useState({ y: 0, scale: 0.2 });
   const [isAnimating, setIsAnimating] = useState(false);
   const animationRef = useRef<number>();
+  const hasSwungRef = useRef(false);
 
   // Pitcher selects a pitch
   const handlePitch = (type: PitchType) => {
@@ -37,15 +38,16 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     setPitchData(newPitch);
     setGameState('hitting');
     setMessage(`${type.toUpperCase()} incoming!`);
+    hasSwungRef.current = false;
     
     // Start pitch animation
     startPitchAnimation(duration);
     
     // In a real app, emit to socket: socket.emit('throw_pitch', { roomID, type, duration, timestamp })
     
-    // Auto-strike after animation completes
+    // Auto-strike after animation completes if batter didn't swing
     setTimeout(() => {
-      if (gameState === 'hitting') {
+      if (!hasSwungRef.current) {
         setGameState('result');
         setMessage('STRIKE! No swing.');
         setScore(prev => ({ ...prev, pitcher: prev.pitcher + 1 }));
@@ -58,6 +60,7 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
   const handleSwing = () => {
     if (!pitchData || gameState !== 'hitting') return;
     
+    hasSwungRef.current = true;
     const swingTime = Date.now();
     const reactionTime = swingTime - pitchData.timestamp;
     
@@ -156,6 +159,21 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     // Could add audio here
     // const audio = new Audio('/sounds/crack.mp3');
     // audio.play();
+  };
+
+  const resetGame = () => {
+    setScore({ pitcher: 0, batter: 0 });
+    setStats({
+      homeRuns: 0,
+      fastballsHit: 0,
+      fooledCount: 0,
+      totalSwings: 0,
+      hits: 0
+    });
+    setPitchData(null);
+    setBallPosition({ y: 0, scale: 0.2 });
+    setGameState(role === 'pitcher' ? 'pitching' : 'waiting');
+    setMessage(role === 'pitcher' ? 'Select your pitch' : 'Waiting for pitch...');
   };
 
   const resetRound = () => {
@@ -289,7 +307,7 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
               <div>Times Fooled: {stats.fooledCount}</div>
             </div>
             <button
-              onClick={() => window.location.reload()}
+              onClick={resetGame}
               className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg"
             >
               PLAY AGAIN

@@ -30,6 +30,14 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
 
   // Pitcher selects a pitch
   const handlePitch = (type: PitchType) => {
+    // Clear any existing timeouts
+    if (strikeTimeoutRef.current) {
+      clearTimeout(strikeTimeoutRef.current);
+    }
+    if (resultTimeoutRef.current) {
+      clearTimeout(resultTimeoutRef.current);
+    }
+    
     const duration = type === 'fastball' ? 600 : 1200;
     const newPitch: PitchData = { 
       type, 
@@ -63,6 +71,15 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     if (!pitchData || gameState !== 'hitting') return;
     
     hasSwungRef.current = true;
+    
+    // Clear the strike timeout since batter swung
+    if (strikeTimeoutRef.current) {
+      clearTimeout(strikeTimeoutRef.current);
+    }
+    if (resultTimeoutRef.current) {
+      clearTimeout(resultTimeoutRef.current);
+    }
+    
     const swingTime = Date.now();
     const reactionTime = swingTime - pitchData.timestamp;
     
@@ -164,6 +181,17 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
   };
 
   const resetGame = () => {
+    // Clear all active timeouts and animations
+    if (strikeTimeoutRef.current) {
+      clearTimeout(strikeTimeoutRef.current);
+    }
+    if (resultTimeoutRef.current) {
+      clearTimeout(resultTimeoutRef.current);
+    }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    
     setScore({ pitcher: 0, batter: 0 });
     setStats({
       homeRuns: 0,
@@ -174,6 +202,7 @@ export function BaseballGame({ role, roomCode }: BaseballGameProps) {
     });
     setPitchData(null);
     setBallPosition({ y: 0, scale: 0.2 });
+    setIsAnimating(false);
     setGameState(role === 'pitcher' ? 'pitching' : 'waiting');
     setMessage(role === 'pitcher' ? 'Select your pitch' : 'Waiting for pitch...');
   };

@@ -32,7 +32,7 @@ class ImportManager: NSObject, ObservableObject {
     func startDeviceMonitoring() {
         deviceBrowser = ICDeviceBrowser()
         deviceBrowser?.delegate = self
-        deviceBrowser?.browsedDeviceTypeMask = ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue
+        deviceBrowser?.browsedDeviceTypeMask = .camera
         deviceBrowser?.start()
         statusMessage = "Monitoring for iPhone connection..."
     }
@@ -133,12 +133,19 @@ class ImportManager: NSObject, ObservableObject {
         // Download file to temporary location
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
 
-        let success = await withCheckedContinuation { continuation in
-            file.requestDownload(
-                to: tempURL,
-                options: [:]
-            ) { error in
-                continuation.resume(returning: error == nil)
+        // Use requestData which is simpler and returns file data directly
+        let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            file.requestData { data, error in
+                if let data = data, error == nil {
+                    do {
+                        try data.write(to: tempURL)
+                        continuation.resume(returning: true)
+                    } catch {
+                        continuation.resume(returning: false)
+                    }
+                } else {
+                    continuation.resume(returning: false)
+                }
             }
         }
 

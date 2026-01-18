@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.autoflipper.app',
-  appName: 'AutoFlipper',
+  appId: 'com.autoflipper.optionsiq',
+  appName: 'OptionsIQ',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
@@ -11,7 +11,7 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: 'automatic',
-    scheme: 'AutoFlipper'
+    scheme: 'OptionsIQ'
   }
 };
 

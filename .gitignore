@@ -27,3 +27,15 @@ dist-ssr
 ios/App/Pods
 ios/App/App/public
 android/app/src/main/assets/public
+
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Keep the example file
+!.env.example
+
+# Local Netlify folder
+.netlify

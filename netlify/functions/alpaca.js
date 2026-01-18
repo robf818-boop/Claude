@@ -17,6 +17,18 @@ export const handler = async (event) => {
   const ALPACA_KEY = process.env.ALPACA_API_KEY;
   const ALPACA_SECRET = process.env.ALPACA_SECRET_KEY;
 
+  // Check if keys are configured
+  if (!ALPACA_KEY || !ALPACA_SECRET) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ 
+        error: 'Alpaca API keys not configured in Netlify environment variables',
+        hint: 'Add ALPACA_API_KEY and ALPACA_SECRET_KEY in Netlify dashboard'
+      }),
+    };
+  }
+
   // Paper trading URLs
   const TRADING_URL = 'https://paper-api.alpaca.markets';
   const DATA_URL = 'https://data.alpaca.markets';
@@ -133,7 +145,10 @@ export const handler = async (event) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ 
+        error: error.message,
+        details: 'Check Netlify function logs for more information'
+      }),
     };
   }
 };

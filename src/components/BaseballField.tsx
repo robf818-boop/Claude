@@ -5,6 +5,7 @@ interface BaseballFieldProps {
   positions?: PlayerPositions;
   runners?: BaseRunners;
   selectedPosition?: string | null;
+  onSelectPosition?: (position: string) => void;
   ballLocation?: string;
   playType?: string;
 }
@@ -13,6 +14,7 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
   positions,
   runners = { first: false, second: false, third: false },
   selectedPosition = null,
+  onSelectPosition,
   ballLocation,
   playType,
 }) => {
@@ -84,8 +86,61 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
         className="w-full h-auto"
         style={{ maxHeight: '85vh' }}
       >
-        {/* Background - Outfield grass */}
-        <rect x="0" y="0" width={viewBox} height={viewBox} fill="#2d5016" />
+        {/* Definitions for gradients and patterns */}
+        <defs>
+          {/* Grass gradient */}
+          <linearGradient id="grassGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#1a4d0f" />
+            <stop offset="50%" stopColor="#2d5016" />
+            <stop offset="100%" stopColor="#1f5713" />
+          </linearGradient>
+          
+          {/* Mowing stripe pattern */}
+          <pattern id="mowingStripes" patternUnits="userSpaceOnUse" width="40" height="40" patternTransform="rotate(45)">
+            <rect x="0" y="0" width="20" height="40" fill="#2d5016" />
+            <rect x="20" y="0" width="20" height="40" fill="#1f5713" />
+          </pattern>
+          
+          {/* Drop shadow for bases and players */}
+          <filter id="dropShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+            <feOffset dx="1" dy="2" result="offsetblur"/>
+            <feComponentTransfer>
+              <feFuncA type="linear" slope="0.3"/>
+            </feComponentTransfer>
+            <feMerge>
+              <feMergeNode/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Background - Outfield grass with pattern */}
+        <rect x="0" y="0" width={viewBox} height={viewBox} fill="url(#grassGradient)" />
+        <rect x="0" y="0" width={viewBox} height={viewBox} fill="url(#mowingStripes)" opacity="0.3" />
+
+        {/* Outfield fence */}
+        <path
+          d={`
+            M 20 50
+            A ${baseDistance * 2.5} ${baseDistance * 2.5} 0 0 1 ${viewBox - 20} 50
+          `}
+          fill="none"
+          stroke="#3d2817"
+          strokeWidth="4"
+        />
+
+        {/* Warning track */}
+        <path
+          d={`
+            M 35 70
+            A ${baseDistance * 2.3} ${baseDistance * 2.3} 0 0 1 ${viewBox - 35} 70
+          `}
+          fill="none"
+          stroke="#b8926a"
+          strokeWidth="15"
+          opacity="0.7"
+        />
 
         {/* Outfield grass arc */}
         <path
@@ -96,64 +151,100 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
             Z
           `}
           fill="#3d6b1f"
+          opacity="0.3"
         />
 
-        {/* Infield dirt - perfect diamond plus extensions */}
+        {/* Infield dirt - perfect diamond with rounded edges */}
         <path
           d={`
             M ${home.x} ${home.y + 30}
-            L ${home.x - 40} ${home.y}
-            L ${third.x - 35} ${third.y - 25}
-            L ${third.x} ${third.y - 40}
-            L ${second.x - 40} ${second.y}
+            Q ${home.x - 25} ${home.y + 15} ${home.x - 40} ${home.y}
+            Q ${home.x - 45} ${home.y - 10} ${third.x - 35} ${third.y - 25}
+            Q ${third.x - 20} ${third.y - 35} ${third.x} ${third.y - 40}
+            Q ${third.x + 15} ${third.y - 42} ${second.x - 40} ${second.y}
             L ${second.x} ${second.y - 40}
             L ${second.x + 40} ${second.y}
-            L ${first.x} ${first.y - 40}
-            L ${first.x + 35} ${first.y - 25}
-            L ${home.x + 40} ${home.y}
+            Q ${first.x - 15} ${first.y - 42} ${first.x} ${first.y - 40}
+            Q ${first.x + 20} ${first.y - 35} ${first.x + 35} ${first.y - 25}
+            Q ${home.x + 45} ${home.y - 10} ${home.x + 40} ${home.y}
+            Q ${home.x + 25} ${home.y + 15} ${home.x} ${home.y + 30}
             Z
           `}
-          fill="#c9a876"
+          fill="#b8926a"
           stroke="#a68a5f"
           strokeWidth="1"
         />
+        
+        {/* Dirt texture overlay */}
+        <path
+          d={`
+            M ${home.x} ${home.y + 30}
+            Q ${home.x - 25} ${home.y + 15} ${home.x - 40} ${home.y}
+            Q ${home.x - 45} ${home.y - 10} ${third.x - 35} ${third.y - 25}
+            Q ${third.x - 20} ${third.y - 35} ${third.x} ${third.y - 40}
+            Q ${third.x + 15} ${third.y - 42} ${second.x - 40} ${second.y}
+            L ${second.x} ${second.y - 40}
+            L ${second.x + 40} ${second.y}
+            Q ${first.x - 15} ${first.y - 42} ${first.x} ${first.y - 40}
+            Q ${first.x + 20} ${first.y - 35} ${first.x + 35} ${first.y - 25}
+            Q ${home.x + 45} ${home.y - 10} ${home.x + 40} ${home.y}
+            Q ${home.x + 25} ${home.y + 15} ${home.x} ${home.y + 30}
+            Z
+          `}
+          fill="#c9a876"
+          opacity="0.4"
+        />
 
-        {/* Pitcher's mound circle */}
+        {/* Pitcher's mound circle with enhanced styling */}
         <circle
           cx={pitcher.x}
           cy={pitcher.y}
           r="24"
-          fill="#c9a876"
+          fill="#b8926a"
           stroke="#a68a5f"
-          strokeWidth="2"
+          strokeWidth="2.5"
+          filter="url(#dropShadow)"
+        />
+        <circle
+          cx={pitcher.x}
+          cy={pitcher.y}
+          r="18"
+          fill="#c9a876"
+          opacity="0.5"
         />
         <circle
           cx={pitcher.x}
           cy={pitcher.y}
           r="12"
           fill="none"
-          stroke="#a68a5f"
-          strokeWidth="1.5"
+          stroke="#8b7355"
+          strokeWidth="2"
+        />
+        <circle
+          cx={pitcher.x}
+          cy={pitcher.y}
+          r="3"
+          fill="#8b7355"
         />
 
-        {/* Foul lines */}
+        {/* Foul lines - more prominent */}
         <line
           x1={home.x}
           y1={home.y}
           x2={first.x + 100}
           y2={first.y + 200}
-          stroke="#fff"
-          strokeWidth="2.5"
-          opacity="0.8"
+          stroke="#ffffff"
+          strokeWidth="3"
+          opacity="0.9"
         />
         <line
           x1={home.x}
           y1={home.y}
           x2={third.x - 100}
           y2={third.y + 200}
-          stroke="#fff"
-          strokeWidth="2.5"
-          opacity="0.8"
+          stroke="#ffffff"
+          strokeWidth="3"
+          opacity="0.9"
         />
 
         {/* Base paths */}
@@ -209,63 +300,128 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           strokeWidth="3"
         />
 
-        {/* Home Plate */}
+        {/* Batter's boxes */}
+        {/* Left batter's box */}
+        <rect
+          x={home.x - 25}
+          y={home.y - 5}
+          width="12"
+          height="20"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          opacity="0.7"
+        />
+        {/* Right batter's box */}
+        <rect
+          x={home.x + 13}
+          y={home.y - 5}
+          width="12"
+          height="20"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          opacity="0.7"
+        />
+        {/* Catcher's box */}
+        <rect
+          x={home.x - 12}
+          y={home.y + 8}
+          width="24"
+          height="14"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          opacity="0.5"
+        />
+
+        {/* Coaching boxes */}
+        {/* First base coaching box */}
+        <rect
+          x={first.x + 15}
+          y={first.y + 10}
+          width="18"
+          height="25"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          strokeDasharray="4,2"
+          opacity="0.5"
+        />
+        {/* Third base coaching box */}
+        <rect
+          x={third.x - 33}
+          y={third.y + 10}
+          width="18"
+          height="25"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          strokeDasharray="4,2"
+          opacity="0.5"
+        />
+
+        {/* Home Plate - more accurate shape */}
         <path
           d={`
-            M ${home.x} ${home.y + 8}
-            L ${home.x - 8} ${home.y}
-            L ${home.x - 8} ${home.y - 8}
-            L ${home.x} ${home.y - 12}
-            L ${home.x + 8} ${home.y - 8}
-            L ${home.x + 8} ${home.y}
+            M ${home.x} ${home.y + 10}
+            L ${home.x - 9} ${home.y + 1}
+            L ${home.x - 9} ${home.y - 9}
+            L ${home.x} ${home.y - 14}
+            L ${home.x + 9} ${home.y - 9}
+            L ${home.x + 9} ${home.y + 1}
             Z
           `}
-          fill={runners.first || runners.second || runners.third ? "#fff" : "#fff"}
+          fill="#ffffff"
           stroke="#333"
-          strokeWidth="1.5"
+          strokeWidth="2"
+          filter="url(#dropShadow)"
         />
 
-        {/* First Base */}
+        {/* First Base with shadow */}
         <rect
-          x={first.x - 12}
-          y={first.y - 12}
-          width="24"
-          height="24"
-          fill={runners.first ? "#fbbf24" : "#fff"}
+          x={first.x - 13}
+          y={first.y - 13}
+          width="26"
+          height="26"
+          fill={runners.first ? "#fbbf24" : "#ffffff"}
           stroke={runners.first ? "#f59e0b" : "#333"}
-          strokeWidth="2"
+          strokeWidth="2.5"
+          filter="url(#dropShadow)"
         />
         {runners.first && (
-          <circle cx={first.x} cy={first.y} r="6" fill="#f59e0b" />
+          <circle cx={first.x} cy={first.y} r="7" fill="#f59e0b" />
         )}
 
-        {/* Second Base */}
+        {/* Second Base with shadow */}
         <rect
-          x={second.x - 12}
-          y={second.y - 12}
-          width="24"
-          height="24"
-          fill={runners.second ? "#fbbf24" : "#fff"}
+          x={second.x - 13}
+          y={second.y - 13}
+          width="26"
+          height="26"
+          fill={runners.second ? "#fbbf24" : "#ffffff"}
           stroke={runners.second ? "#f59e0b" : "#333"}
-          strokeWidth="2"
+          strokeWidth="2.5"
           transform={`rotate(45 ${second.x} ${second.y})`}
+          filter="url(#dropShadow)"
         />
         {runners.second && (
-          <circle cx={second.x} cy={second.y} r="6" fill="#f59e0b" />
+          <circle cx={second.x} cy={second.y} r="7" fill="#f59e0b" />
         )}
 
-        {/* Third Base */}
+        {/* Third Base with shadow */}
         <rect
-          x={third.x - 12}
-          y={third.y - 12}
-          width="24"
-          height="24"
-          fill={runners.third ? "#fbbf24" : "#fff"}
+          x={third.x - 13}
+          y={third.y - 13}
+          width="26"
+          height="26"
+          fill={runners.third ? "#fbbf24" : "#ffffff"}
           stroke={runners.third ? "#f59e0b" : "#333"}
-          strokeWidth="2"
+          strokeWidth="2.5"
+          filter="url(#dropShadow)"
         />
         {runners.third && (
-          <circle cx={third.x} cy={third.y} r="6" fill="#f59e0b" />
+          <circle cx={third.x} cy={third.y} r="7" fill="#f59e0b" />
         )}
 
         {/* Ball Path Indicator */}
@@ -309,16 +465,21 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
           const isSelected = selectedPosition === pos;
 
           return (
-            <g key={pos}>
-              {/* Player circle */}
+            <g 
+              key={pos} 
+              onClick={() => onSelectPosition?.(pos)}
+              className="cursor-pointer"
+            >
+              {/* Player circle with shadow */}
               <circle
                 cx={playerPos.x}
                 cy={playerPos.y}
-                r={isSelected ? "16" : "12"}
+                r={isSelected ? "18" : "14"}
                 fill={isSelected ? "#3b82f6" : "#ef4444"}
                 stroke={isSelected ? "#1d4ed8" : "#991b1b"}
-                strokeWidth={isSelected ? "2.5" : "2"}
-                className="cursor-pointer transition-all"
+                strokeWidth={isSelected ? "3" : "2.5"}
+                className="transition-all hover:opacity-80"
+                filter="url(#dropShadow)"
               />
 
               {/* Position label */}
@@ -328,7 +489,7 @@ export const BaseballField: React.FC<BaseballFieldProps> = ({
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="#fff"
-                fontSize="10"
+                fontSize={isSelected ? "12" : "10"}
                 fontWeight="bold"
                 className="pointer-events-none select-none"
               >

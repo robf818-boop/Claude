@@ -5,9 +5,10 @@ import { SituationSelector } from './components/SituationSelector';
 import { AIScenarioGenerator } from './components/AIScenarioGenerator';
 import { RulesHandbook } from './components/RulesHandbook';
 import { PlayerInstructions } from './components/PlayerInstructions';
-import { Play, BookOpen, Sparkles, Settings, Users } from 'lucide-react';
+import { GameContainer } from './components/game/GameContainer';
+import { Play, BookOpen, Sparkles, Settings, Users, Gamepad2 } from 'lucide-react';
 
-type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings';
+type Tab = 'situations' | 'ai-generator' | 'rules' | 'settings' | 'game';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('situations');
@@ -16,6 +17,7 @@ function App() {
   const [currentSituation, setCurrentSituation] = useState<GameSituation | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [showGame, setShowGame] = useState(false);
 
   const handleSimulate = () => {
     if (!currentSituation) return;
@@ -36,17 +38,40 @@ function App() {
   };
 
   return (
+    <>
+      {showGame ? (
+        <div className="relative min-h-screen">
+          <button
+            onClick={() => setShowGame(false)}
+            className="absolute top-4 left-4 z-50 bg-white hover:bg-gray-100 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2"
+          >
+            ← Back to DefendIQ
+          </button>
+          <GameContainer />
+        </div>
+      ) : (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 to-green-600 text-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <Users size={36} />
-            DefendIQ
-          </h1>
-          <p className="mt-2 text-blue-100">
-            Master Baseball Defensive Positioning - Interactive training for coaches and players
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold flex items-center gap-3">
+                <Users size={36} />
+                DefendIQ
+              </h1>
+              <p className="mt-2 text-blue-100">
+                Master Baseball Defensive Positioning - Interactive training for coaches and players
+              </p>
+            </div>
+            <button
+              onClick={() => setShowGame(true)}
+              className="bg-white hover:bg-gray-100 text-blue-600 font-bold py-3 px-6 rounded-lg shadow-lg flex items-center gap-2 transition-all transform hover:scale-105"
+            >
+              <Gamepad2 size={24} />
+              <span>Play Pitch/Hit Game</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -289,6 +314,8 @@ function App() {
         </div>
       </footer>
     </div>
+      )}
+    </>
   );
 }
 

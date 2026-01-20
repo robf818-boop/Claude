@@ -177,7 +177,23 @@ export class Executor {
       return { success: false, error: 'Invalid signal' };
     }
 
-    // Check if we already have a position in this symbol
+    // Check if we already have a position in this symbol - CHECK ALPACA FIRST
+    try {
+      const alpaca = getAlpacaProvider();
+      const alpacaPositions = await alpaca.getPositions();
+      const existingAlpacaPosition = alpacaPositions.find(p => p.symbol === signal.symbol);
+      if (existingAlpacaPosition) {
+        console.log(`[Executor] Already have Alpaca position in ${signal.symbol}, skipping`);
+        return {
+          success: false,
+          error: `Already have position in ${signal.symbol}`,
+        };
+      }
+    } catch (error) {
+      console.error('[Executor] Failed to check Alpaca positions:', error);
+    }
+
+    // Also check internal positions as fallback
     const existingPosition = this.positions.get(signal.symbol);
     if (existingPosition) {
       return {
@@ -203,6 +219,27 @@ export class Executor {
     const quantity = this.calculatePositionSize(signal, optionContract);
     if (quantity <= 0) {
       return { success: false, error: 'Position size too small' };
+    }
+
+    // SAFETY CHECK: Verify we have enough buying power
+    try {
+      const alpaca = getAlpacaProvider();
+      const account = await alpaca.getAccount();
+      const estimatedCost = signal.entry * quantity;
+
+      // Require at least $5000 buying power and cost must be under 10% of buying power
+      if (account.buyingPower < 5000) {
+        console.log(`[Executor] Insufficient buying power: $${account.buyingPower}`);
+        return { success: false, error: 'Insufficient buying power' };
+      }
+
+      if (estimatedCost > account.buyingPower * 0.1) {
+        console.log(`[Executor] Order too large: $${estimatedCost} > 10% of buying power`);
+        return { success: false, error: 'Order exceeds position size limit' };
+      }
+    } catch (error) {
+      console.error('[Executor] Failed to check buying power:', error);
+      return { success: false, error: 'Cannot verify buying power' };
     }
 
     // Create and submit order

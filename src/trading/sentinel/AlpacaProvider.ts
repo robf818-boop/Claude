@@ -1,6 +1,7 @@
 /**
  * Alpaca Data Provider
- * Fetches real market data from Alpaca via Netlify Functions
+ * Fetches real market data from Alpaca via serverless functions
+ * Supports both Netlify and Vercel deployments
  */
 
 import { Candle, CandleInterval, OptionChain } from '../core/types';
@@ -39,19 +40,29 @@ export class AlpacaProvider {
   private baseUrl: string;
 
   constructor() {
-    // Use relative URL for Netlify function
-    this.baseUrl = '/.netlify/functions/alpaca';
+    // Use /api/alpaca which works with both Vercel and can fallback to Netlify
+    this.baseUrl = '/api/alpaca';
   }
 
   private async callApi(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    const response = await fetch(this.baseUrl, {
+    // Try primary URL first
+    let response = await fetch(this.baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, ...params }),
     });
 
+    // If Vercel fails, try Netlify
+    if (!response.ok && this.baseUrl === '/api/alpaca') {
+      response = await fetch('/.netlify/functions/alpaca', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...params }),
+      });
+    }
+
     if (!response.ok) {
-      throw new Error(`Alpaca API error: ${response.status}`);
+      throw new Error('Alpaca API error: ' + response.status);
     }
 
     return response.json();

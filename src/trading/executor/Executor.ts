@@ -20,6 +20,7 @@ import {
   TradingEvent,
 } from '../core/types';
 import { EventBus, getEventBus } from '../events/EventBus';
+import { getAlpacaProvider } from '../sentinel/AlpacaProvider';
 
 interface OrderRequest {
   signal: TradingSignal;
@@ -221,14 +222,58 @@ export class Executor {
     positionId: string,
     _reason: string = 'Manual close'
   ): Promise<ExecutionResult> {
+    // For Alpaca positions, the positionId is usually the symbol
+    // Try to close via Alpaca first
+    const symbol = positionId.replace('alpaca-', '').split('-')[0];
+
+    try {
+      const alpaca = getAlpacaProvider();
+      const positions = await alpaca.getPositions();
+      const alpacaPosition = positions.find(p => p.symbol === symbol || positionId.includes(p.symbol));
+
+      if (alpacaPosition) {
+        // Close via Alpaca - sell to close long, buy to close short
+        const side = alpacaPosition.qty > 0 ? 'sell' : 'buy';
+        const result = await alpaca.placeOrder({
+          symbol: alpacaPosition.symbol,
+          qty: Math.abs(alpacaPosition.qty),
+          side,
+          type: 'market',
+        });
+
+        console.log(`[Executor] Alpaca close order placed: ${result.orderId} - ${result.status}`);
+
+        this.eventBus.emit('position_closed', { symbol: alpacaPosition.symbol, orderId: result.orderId }, 'executor');
+
+        return {
+          success: true,
+          order: {
+            id: result.orderId,
+            clientOrderId: result.orderId,
+            timestamp: Date.now(),
+            symbol: alpacaPosition.symbol,
+            assetClass: 'equity',
+            side: side === 'sell' ? 'short' : 'long',
+            quantity: Math.abs(alpacaPosition.qty),
+            filledQuantity: Math.abs(alpacaPosition.qty),
+            orderType: 'market',
+            timeInForce: 'day',
+            status: 'filled',
+            submittedAt: Date.now(),
+          }
+        };
+      }
+    } catch (error) {
+      console.error('[Executor] Alpaca close failed:', error);
+    }
+
+    // Fallback to internal positions
     const position = this.positions.get(positionId);
     if (!position) {
-      // Try finding by symbol (positions tab passes symbol sometimes)
       const bySymbol = Array.from(this.positions.values()).find(p => p.symbol === positionId || p.id === positionId);
       if (!bySymbol) {
         return { success: false, error: 'Position not found' };
       }
-      // Use the found position
       const closingOrder = this.createOrder(
         bySymbol.symbol,
         bySymbol.assetClass,
@@ -240,16 +285,14 @@ export class Executor {
       return { success: true, order: closingOrder };
     }
 
-    // Create closing order
     const closingOrder = this.createOrder(
       position.symbol,
       position.assetClass,
-      position.side === 'long' ? 'short' : 'long', // Opposite side to close
+      position.side === 'long' ? 'short' : 'long',
       position.quantity,
       position.optionContract
     );
 
-    // Simulate fill - this handles all the position closing logic
     await this.simulateFill(closingOrder, position.currentPrice);
 
     return { success: true, order: closingOrder };
@@ -378,12 +421,34 @@ export class Executor {
       `[Executor] Order submitted: ${order.side} ${order.quantity}x ${order.symbol}`
     );
 
-    // Simulate execution (in paper trading mode)
-    if (this.config.paperTrading) {
-      const fillPrice = optionContract
-        ? optionContract.ask // Buy at ask
-        : signal.entry;
+    // Execute through Alpaca API (for stocks - options not supported on free tier)
+    if (!optionContract) {
+      try {
+        const alpaca = getAlpacaProvider();
+        const result = await alpaca.placeOrder({
+          symbol: signal.symbol,
+          qty: quantity,
+          side: signal.direction === 'bullish' ? 'buy' : 'sell',
+          type: 'market',
+        });
 
+        console.log(`[Executor] Alpaca order placed: ${result.orderId} - ${result.status}`);
+
+        // Update order with Alpaca ID
+        order.clientOrderId = result.orderId;
+        order.status = result.status === 'accepted' || result.status === 'new' ? 'pending' : 'filled';
+
+        // Emit position opened event
+        this.eventBus.emit('position_opened', { symbol: signal.symbol, orderId: result.orderId }, 'executor');
+
+      } catch (error) {
+        console.error('[Executor] Alpaca order failed:', error);
+        order.status = 'rejected';
+      }
+    } else {
+      // For options, still simulate (Alpaca free tier doesn't support options)
+      console.log('[Executor] Options not supported - simulating fill');
+      const fillPrice = optionContract.ask;
       await this.simulateFill(order, fillPrice);
     }
 

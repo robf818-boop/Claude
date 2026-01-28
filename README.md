@@ -73,7 +73,7 @@ DefendIQ is an interactive web application designed to help baseball coaches tea
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/robf818-boop/Claude.git
 cd Claude
 ```
 

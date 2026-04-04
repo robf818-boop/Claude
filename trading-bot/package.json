@@ -1,0 +1,17 @@
+{
+  "name": "alpaca-wheel-bot",
+  "version": "1.0.0",
+  "description": "Wheel strategy + ETF trend trading bot for Alpaca",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "paper": "PAPER=true DRY_RUN=false node bot.js",
+    "dry": "PAPER=true DRY_RUN=true node bot.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

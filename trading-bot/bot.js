@@ -2,10 +2,10 @@
 'use strict';
 
 /**
- * Wheel Strategy + ETF Trend Bot — Alpaca Live
+ * Wheel Strategy + ETF Trend Bot v2 — Alpaca Live
  *
  * INCOME ENGINE (Wheel):
- *   1. Sell cash-secured puts (4% OTM, 30-45 DTE) on quality stocks in uptrend
+ *   1. Sell cash-secured puts (4% OTM, 21-45 DTE) on quality stocks in uptrend
  *   2. Close at 50% profit — capture theta decay, rinse repeat
  *   3. If assigned → sell covered calls (3% above cost basis)
  *   4. Close calls at 50% profit → sell new calls → repeat until called away
@@ -14,7 +14,16 @@
  *   Hold SPY/QQQ when price > SMA50 > SMA200. Exit when trend breaks.
  *
  * RISK:
- *   Weekly -5% drawdown halt | HV panic filter | max 6 wheels | max 60% deployed
+ *   Weekly -5% drawdown halt | HV panic filter | max 4 wheels | max 70% deployed
+ *
+ * v2 FIXES:
+ *   - S.wheels null guard (fixes CYCLE_FAIL crash on stale state)
+ *   - Cheaper symbols (SOFI/PLTR/MARA etc) — works with ~$1k options BP
+ *   - GTC orders for options so unfilled orders persist overnight
+ *   - Pending order tracking — fill verified before updating state
+ *   - Stack traces in error logs
+ *   - Skip API calls when market closed + no active positions
+ *   - Cumulative P&L tracked and logged every heartbeat
  */
 
 const fs   = require('fs');
@@ -49,15 +58,16 @@ const C = {
   LOOP_SECONDS: num(process.env.LOOP_SECONDS, 300),
 
   TREND_SYMBOLS:  csv(process.env.TREND_SYMBOLS  || 'SPY,QQQ'),
-  WHEEL_SYMBOLS:  csv(process.env.WHEEL_SYMBOLS  || 'AAPL,MSFT,NVDA,AMZN,META,AMD,GOOGL,TSLA'),
+  // Cheaper symbols (~$5-25) so wheel works with ~$1k options buying power
+  WHEEL_SYMBOLS:  csv(process.env.WHEEL_SYMBOLS  || 'SOFI,PLTR,MARA,HOOD,SNAP,RIVN,NIO,SOUN'),
 
-  MAX_WHEEL_POSITIONS: num(process.env.MAX_WHEEL_POSITIONS, 6),
-  MAX_CAPITAL_PCT:     num(process.env.MAX_CAPITAL_PCT,     0.60),
+  MAX_WHEEL_POSITIONS: num(process.env.MAX_WHEEL_POSITIONS, 4),
+  MAX_CAPITAL_PCT:     num(process.env.MAX_CAPITAL_PCT,     0.70),
 
   PUT_OTM_PCT:  num(process.env.PUT_OTM_PCT,  0.04),
   CALL_OTM_PCT: num(process.env.CALL_OTM_PCT, 0.03),
 
-  DTE_MIN:      num(process.env.DTE_MIN,      30),
+  DTE_MIN:      num(process.env.DTE_MIN,      21),
   DTE_MAX:      num(process.env.DTE_MAX,      45),
   PROFIT_CLOSE: num(process.env.PROFIT_CLOSE, 0.50),
   STOP_MULT:    num(process.env.STOP_MULT,    2.00),
@@ -81,14 +91,19 @@ const ht = axios.create({ baseURL: BASE_T, timeout: 30000, headers: { 'APCA-API-
 const hd = axios.create({ baseURL: BASE_D, timeout: 30000, headers: { 'APCA-API-KEY-ID': C.KEY, 'APCA-API-SECRET-KEY': C.SECRET } });
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// wheels[underlying] = { phase:'put'|'call', optionSymbol:string|null,
-//   contracts:number, premiumCollected:number, costBasis:number|null, openedAt:string }
+// wheels[underlying]       = { phase, optionSymbol, contracts, premiumCollected, costBasis, openedAt }
+// pendingOrders[underlying] = { orderId, optionSymbol, contracts, limitPrice, type, openedAt }
 let S = loadState();
+// Guards: ensure required keys always exist regardless of stale state files
+S.wheels        = S.wheels        || {};
+S.pendingOrders = S.pendingOrders || {};
+S.totalPremiumEarned = S.totalPremiumEarned || 0;
 rollWeek();
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function main() {
   log(`BOOT mode=${C.PAPER ? 'PAPER' : 'LIVE'} dry_run=${C.DRY_RUN} endpoint=${BASE_T}`);
+  log(`WHEELS=${C.WHEEL_SYMBOLS.join(',')} MAX=${C.MAX_WHEEL_POSITIONS} BP_PER_PUT=strike*100`);
   try {
     const [acct, clock] = await Promise.all([getAccount(), getClock()]);
     log(`SELFTEST ok status=${acct.status} options_level=${acct.options_trading_level ?? 'n/a'} market_open=${clock.is_open} equity=${fmt(acct.equity)}`);
@@ -98,7 +113,7 @@ async function main() {
     process.exit(1);
   }
   for (;;) {
-    try { rollWeek(); await cycle(); } catch (e) { logErr('CYCLE_FAIL', e); }
+    try { rollWeek(); await cycle(); } catch (e) { logErr('CYCLE_FAIL', e); log(`STACK ${e.stack}`); }
     await sleep(C.LOOP_SECONDS * 1000);
   }
 }
@@ -111,7 +126,17 @@ async function cycle() {
 
   const equity   = num(acct.equity);
   const weekPnL  = S.weekStartEquity ? (equity - S.weekStartEquity) / S.weekStartEquity : 0;
-  log(`HEARTBEAT equity=${fmt(equity)} week_pnl=${pct(weekPnL)} bp=${fmt(acct.buying_power)} opts_bp=${fmt(acct.options_buying_power)}`);
+  const hasActive = Object.keys(S.wheels).length > 0 || Object.keys(S.pendingOrders).length > 0;
+  log(`HEARTBEAT equity=${fmt(equity)} week_pnl=${pct(weekPnL)} opts_bp=${fmt(acct.options_buying_power)} total_premium=${fmt(S.totalPremiumEarned)} wheels=${Object.keys(S.wheels).length} pending=${Object.keys(S.pendingOrders).length}`);
+
+  // Skip heavy work when market is closed and nothing to manage
+  if (!clock.is_open && !hasActive) {
+    log('MARKET_CLOSED no active wheels — sleeping');
+    return;
+  }
+
+  // Check fill status of any pending orders
+  await checkPendingOrders({ orders });
 
   // Always manage existing positions regardless of halt
   await manageTrend({ acct, positions, orders });
@@ -125,6 +150,39 @@ async function cycle() {
   if (num(acct.options_trading_level) < 1) { log('OPTIONS_LEVEL<1 cannot sell options'); return; }
 
   await openNewWheels({ acct, positions });
+}
+
+// ── Check pending orders for fills ───────────────────────────────────────────
+async function checkPendingOrders({ orders }) {
+  if (!Object.keys(S.pendingOrders).length) return;
+  const openIds = new Set(orders.map(o => o.id));
+
+  for (const key of Object.keys(S.pendingOrders)) {
+    const p = S.pendingOrders[key];
+    if (openIds.has(p.orderId)) continue; // still open
+
+    let od;
+    try { const { data } = await ht.get(`/v2/orders/${p.orderId}`); od = data; }
+    catch (e) { logErr(`PENDING_CHECK ${key}`, e); continue; }
+
+    if (od.status === 'filled') {
+      const filled = num(od.filled_avg_price);
+      log(`ORDER_FILLED ${key} type=${p.type} filled=${fmt(filled)} contracts=${p.contracts}`);
+      if (p.type === 'put_open') {
+        S.wheels[p.underlying] = { phase: 'put', optionSymbol: p.optionSymbol, contracts: p.contracts, premiumCollected: filled * 100 * p.contracts, costBasis: null, openedAt: p.openedAt };
+      } else if (p.type === 'call_open' && S.wheels[p.underlying]) {
+        S.wheels[p.underlying].optionSymbol = p.optionSymbol;
+        S.wheels[p.underlying].premiumCollected += filled * 100 * p.contracts;
+      }
+      delete S.pendingOrders[key];
+      saveState();
+    } else if (['cancelled', 'expired', 'rejected'].includes(od.status)) {
+      log(`ORDER_${od.status.toUpperCase()} ${key} — removed from pending`);
+      if (p.type === 'call_open' && S.wheels[p.underlying]) S.wheels[p.underlying].optionSymbol = null;
+      delete S.pendingOrders[key];
+      saveState();
+    }
+  }
 }
 
 // ── Trend core ────────────────────────────────────────────────────────────────
@@ -190,8 +248,9 @@ async function manageWheels({ positions, orders }) {
           saveState();
           await sellCoveredCall(underlying, wheel, posMap, openSyms);
         } else {
-          // Expired worthless or already closed — wheel complete, re-open next cycle
-          log(`PUT_GONE ${underlying} expired/closed total_premium=${fmt(wheel.premiumCollected)}`);
+          // Expired worthless or already closed
+          S.totalPremiumEarned += wheel.premiumCollected;
+          log(`PUT_GONE ${underlying} expired/closed premium_kept=${fmt(wheel.premiumCollected)} total_earned=${fmt(S.totalPremiumEarned)}`);
           delete S.wheels[underlying];
           saveState();
         }
@@ -211,8 +270,9 @@ async function manageWheels({ positions, orders }) {
         const qty   = Math.abs(num(optPos.qty));
         const limit = roundOption(current * 1.05);
         await order({ symbol: wheel.optionSymbol, qty, side: 'buy', type: 'limit', limitPrice: limit, tif: 'day', tag: 'PUT_CLOSE' });
-        log(`PUT_CLOSE ${underlying} profit=${pct(profitPct)} kept=${fmt(entry * profitPct * 100 * qty)}`);
-        wheel.premiumCollected += entry * profitPct * 100 * qty;
+        const kept = entry * profitPct * 100 * qty;
+        S.totalPremiumEarned += kept;
+        log(`PUT_CLOSE ${underlying} profit=${pct(profitPct)} kept=${fmt(kept)} total_earned=${fmt(S.totalPremiumEarned)}`);
         delete S.wheels[underlying];
         saveState();
         continue;
@@ -234,7 +294,8 @@ async function manageWheels({ positions, orders }) {
 
       // No stock = called away or manually exited
       if (stockQty < wheel.contracts * 100 && !wheel.optionSymbol) {
-        log(`CALLED_AWAY ${underlying} total_premium=${fmt(wheel.premiumCollected)}`);
+        S.totalPremiumEarned += wheel.premiumCollected;
+        log(`CALLED_AWAY ${underlying} total_premium=${fmt(wheel.premiumCollected)} total_earned=${fmt(S.totalPremiumEarned)}`);
         delete S.wheels[underlying];
         saveState();
         continue;
@@ -251,7 +312,8 @@ async function manageWheels({ positions, orders }) {
       if (!optPos) {
         // Call disappeared — called away or closed
         if (stockQty < wheel.contracts * 100) {
-          log(`CALLED_AWAY ${underlying} total_premium=${fmt(wheel.premiumCollected)}`);
+          S.totalPremiumEarned += wheel.premiumCollected;
+          log(`CALLED_AWAY ${underlying} total_premium=${fmt(wheel.premiumCollected)} total_earned=${fmt(S.totalPremiumEarned)}`);
           delete S.wheels[underlying];
         } else {
           // Call expired worthless — sell another
@@ -274,9 +336,11 @@ async function manageWheels({ positions, orders }) {
         const qty   = Math.abs(num(optPos.qty));
         const limit = roundOption(current * 1.05);
         await order({ symbol: wheel.optionSymbol, qty, side: 'buy', type: 'limit', limitPrice: limit, tif: 'day', tag: 'CALL_CLOSE' });
-        log(`CALL_CLOSE ${underlying} profit=${pct(profitPct)} kept=${fmt(entry * profitPct * 100 * qty)}`);
-        wheel.premiumCollected += entry * profitPct * 100 * qty;
-        wheel.optionSymbol = null;  // sell new call next cycle
+        const kept = entry * profitPct * 100 * qty;
+        S.totalPremiumEarned += kept;
+        log(`CALL_CLOSE ${underlying} profit=${pct(profitPct)} kept=${fmt(kept)} total_earned=${fmt(S.totalPremiumEarned)}`);
+        wheel.premiumCollected += kept;
+        wheel.optionSymbol = null;
         saveState();
         continue;
       }
@@ -294,16 +358,17 @@ async function manageWheels({ positions, orders }) {
 
 async function sellCoveredCall(underlying, wheel, posMap, openSyms) {
   if (openSyms.has(underlying)) return;
+  if (S.pendingOrders[`${underlying}_call`]) return; // already pending
   const stockPos = posMap[underlying];
   if (!stockPos) { log(`CALL_SKIP ${underlying} no stock position`); return; }
 
   const shares    = Math.abs(num(stockPos.qty));
   const contracts = Math.floor(shares / 100);
-  if (contracts < 1) { log(`CALL_SKIP ${underlying} insufficient shares=${shares}`); return; }
+  if (contracts < 1) { log(`CALL_SKIP ${underlying} shares=${shares} < 100`); return; }
 
-  const costBasis     = wheel.costBasis || num(stockPos.avg_entry_price);
-  const targetStrike  = costBasis * (1 + C.CALL_OTM_PCT);
-  const currentPrice  = num(stockPos.current_price);
+  const costBasis    = wheel.costBasis || num(stockPos.avg_entry_price);
+  const targetStrike = costBasis * (1 + C.CALL_OTM_PCT);
+  const currentPrice = num(stockPos.current_price);
 
   const contract = await pickOption(underlying, 'call', targetStrike, currentPrice);
   if (!contract) { log(`CALL_SKIP ${underlying} no contract found`); return; }
@@ -311,24 +376,27 @@ async function sellCoveredCall(underlying, wheel, posMap, openSyms) {
   const limitPrice = roundOption(contract.midPrice || contract.bidPrice);
   if (!limitPrice || limitPrice <= 0) { log(`CALL_SKIP ${underlying} bad price`); return; }
 
-  await order({ symbol: contract.symbol, qty: contracts, side: 'sell', type: 'limit', limitPrice, tif: 'day', tag: 'CALL_OPEN' });
-  log(`CALL_OPEN ${underlying} strike=${contract.strike} expiry=${contract.expiry} premium=${fmt(limitPrice)} contracts=${contracts}`);
+  // Use GTC so order persists if not filled today
+  const result = await order({ symbol: contract.symbol, qty: contracts, side: 'sell', type: 'limit', limitPrice, tif: 'gtc', tag: 'CALL_OPEN' });
+  if (!result || result.dry_run) return;
 
-  wheel.optionSymbol = contract.symbol;
-  wheel.contracts    = contracts;
+  log(`CALL_OPEN_PENDING ${underlying} strike=${contract.strike} expiry=${contract.expiry} premium=${fmt(limitPrice)} contracts=${contracts} orderId=${result.id}`);
+  S.pendingOrders[`${underlying}_call`] = { type: 'call_open', underlying, orderId: result.id, optionSymbol: contract.symbol, contracts, limitPrice, openedAt: new Date().toISOString() };
   saveState();
 }
 
 // ── Open new wheel positions ───────────────────────────────────────────────────
 async function openNewWheels({ acct, positions }) {
-  const active = Object.values(S.wheels).length;
+  const pendingPuts = Object.keys(S.pendingOrders).filter(k => !k.endsWith('_call')).length;
+  const active = Object.keys(S.wheels).length + pendingPuts;
   const slots  = C.MAX_WHEEL_POSITIONS - active;
-  if (slots <= 0) { log(`WHEEL_SKIP max_positions reached (${active})`); return; }
+  if (slots <= 0) { log(`WHEEL_SKIP max_positions=${C.MAX_WHEEL_POSITIONS} active=${active}`); return; }
 
   const hv = await computeHV('SPY', 20);
   if (hv > C.HV_PANIC) { log(`WHEEL_SKIP hv=${pct(hv)} > panic=${pct(C.HV_PANIC)}`); return; }
 
-  const eligible = C.WHEEL_SYMBOLS.filter(s => !S.wheels[s]);
+  const inUse    = new Set([...Object.keys(S.wheels), ...Object.keys(S.pendingOrders).map(k => k.replace('_call', ''))]);
+  const eligible = C.WHEEL_SYMBOLS.filter(s => !inUse.has(s));
   if (!eligible.length) return;
 
   const bars   = await getBars(eligible, '1Day', 110);
@@ -380,17 +448,12 @@ async function openNewWheels({ acct, positions }) {
 
     if (contracts < 1) { log(`PUT_SKIP ${candidate.sym} insufficient bp need=${fmt(bpPerContract)}`); continue; }
 
-    await order({ symbol: contract.symbol, qty: contracts, side: 'sell', type: 'limit', limitPrice, tif: 'day', tag: 'PUT_OPEN' });
-    log(`PUT_OPEN ${candidate.sym} strike=${contract.strike} expiry=${contract.expiry} premium=${fmt(limitPrice)} contracts=${contracts} rsi=${candidate.rsi.toFixed(1)} hv=${pct(hv)}`);
+    // GTC so order persists if unfilled today; track as pending until fill confirmed
+    const result = await order({ symbol: contract.symbol, qty: contracts, side: 'sell', type: 'limit', limitPrice, tif: 'gtc', tag: 'PUT_OPEN' });
+    if (!result || result.dry_run) continue;
 
-    S.wheels[candidate.sym] = {
-      phase:             'put',
-      optionSymbol:      contract.symbol,
-      contracts,
-      premiumCollected:  limitPrice * 100 * contracts,
-      costBasis:         null,
-      openedAt:          new Date().toISOString(),
-    };
+    log(`PUT_OPEN_PENDING ${candidate.sym} strike=${contract.strike} expiry=${contract.expiry} premium=${fmt(limitPrice)} contracts=${contracts} rsi=${candidate.rsi.toFixed(1)} hv=${pct(hv)} orderId=${result.id}`);
+    S.pendingOrders[candidate.sym] = { type: 'put_open', underlying: candidate.sym, orderId: result.id, optionSymbol: contract.symbol, contracts, limitPrice, openedAt: new Date().toISOString() };
     saveState();
   }
 }
@@ -534,15 +597,22 @@ async function computeHV(symbol, days = 20) {
 // ── State helpers ─────────────────────────────────────────────────────────────
 function loadState() {
   try {
-    if (fs.existsSync(STATE_F)) return JSON.parse(fs.readFileSync(STATE_F, 'utf8'));
+    if (fs.existsSync(STATE_F)) {
+      const s = JSON.parse(fs.readFileSync(STATE_F, 'utf8'));
+      // Ensure all required keys exist (handles upgrades from older state files)
+      s.wheels             = s.wheels             || {};
+      s.pendingOrders      = s.pendingOrders      || {};
+      s.totalPremiumEarned = s.totalPremiumEarned || 0;
+      return s;
+    }
   } catch (e) { logErr('LOAD_STATE', e); }
-  return { weekKey: weekKey(), weekStartEquity: null, trendDate: null, wheels: {} };
+  return { weekKey: weekKey(), weekStartEquity: null, trendDate: null, wheels: {}, pendingOrders: {}, totalPremiumEarned: 0 };
 }
 function saveState() { fs.writeFileSync(STATE_F, JSON.stringify(S, null, 2)); }
 function rollWeek() {
   const wk = weekKey();
   if (S.weekKey !== wk) {
-    log(`NEW_WEEK ${wk} prev_equity=${fmt(S.weekStartEquity)}`);
+    log(`NEW_WEEK ${wk} prev_equity=${fmt(S.weekStartEquity)} total_premium_earned=${fmt(S.totalPremiumEarned)}`);
     S.weekKey = wk;
     S.weekStartEquity = null;
     saveState();
